@@ -1,0 +1,11 @@
+Spool Jellyfin portable provider
+Copyright Spool contributors.
+
+Endpoint behaviour and client architecture derive from spool-player/spool,
+revision e0de68c18c3740bc22421b99848fa9f7b2f0e788, including work by
+Sacha Korban, Ethan Dickson, and the other Spool contributors.
+Source: https://github.com/spool-player/spool
+License: Mozilla Public License 2.0 (see LICENSE).
+
+Jellyfin is a separate project. This client is not the Jellyfin server.
+Test responses are synthetic and contain no private account data.

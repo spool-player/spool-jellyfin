@@ -1,0 +1,59 @@
+name: Portable provider
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Qt contract dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-declarative-dev
+      - name: Verify pinned SDK
+        run: python3 tools/check-sdk.py
+      - name: Build actual Qt engine runner
+        run: cmake -S sdk -B build/sdk -G Ninja && cmake --build build/sdk
+      - name: Execute protocol contracts
+        run: timeout 20s build/sdk/provider-contract-runner tests/contract.mjs
+      - name: Execute interpreter-only protocol contracts
+        env:
+          QV4_FORCE_INTERPRETER: '1'
+        run: timeout 20s build/sdk/provider-contract-runner tests/contract.mjs
+      - name: Build deterministic source package
+        run: python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: portable-provider
+          path: dist/spool-jellyfin.zip
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'spool-player/spool-jellyfin'
+    needs: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify release version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 -c 'import json, os; assert os.environ["RELEASE_TAG"] == "v" + json.load(open("manifest.json"))["version"]'
+      - name: Verify SDK and rebuild immutable source package
+        run: python3 tools/check-sdk.py && python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
+        with:
+          subject-path: dist/spool-jellyfin.zip
+      - name: Publish alpha source package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" dist/spool-jellyfin.zip --verify-tag --prerelease --title "$RELEASE_TAG" --notes 'Experimental API 0.1 source package. Not yet a parity-complete replacement for the native Spool Jellyfin client. See README for tested behavior and missing integration. GitHub provenance is not an application update catalogue.'

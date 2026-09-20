@@ -1,0 +1,25 @@
+{
+  "format": 1,
+  "id": "spool.jellyfin",
+  "version": "0.1.0-alpha.1",
+  "api": "0.1",
+  "entry": "logic/provider.mjs",
+  "publisher": "spool-player",
+  "license": "MPL-2.0",
+  "offers": {
+    "authentication": "0.1",
+    "catalog": "0.1",
+    "search": "0.1",
+    "details": "0.1",
+    "variants": "0.1",
+    "playback": "0.1",
+    "reports": "0.1",
+    "user-state": "0.1"
+  },
+  "requires": {"http": "0.1", "source-context": "0.1"},
+  "optional": {},
+  "permissions": ["network:configured-origins", "credentials:source"],
+  "channels": ["desktop", "webos", "android-direct", "google-play", "apple-bundled"],
+  "stateSchema": 1,
+  "ui": {"modules": [], "components": []}
+}

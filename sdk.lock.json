@@ -1,0 +1,12 @@
+{
+  "api": "0.1",
+  "upstream": "https://github.com/spool-player/spool",
+  "files": {
+    "sdk/CMakeLists.txt": "14b20fd1a28ffe94a2ef0de54c8834d59b87f35d7eceacbd3252bc066ea4bea7",
+    "sdk/provider-contract-runner.cpp": "8f4f18409bee7a8b9dcb4488f12147a2ae0bed9a626d1a41eda519451fb588dd",
+    "sdk/provider.d.ts": "86cc28355f7c5783cd339076aeb314baf3d919c4543bd6eb3b9edb8a02e65ff0",
+    "sdk/README.md": "a8b6a4a2984494bc2163e080533d860ad7cc34f8dd66ee1506e11b66e050985f",
+    "sdk/provider-package.py": "a95fdc367c11937ecc0a087c2c03cd57f4ef71562ebb9be74acddfc1f7c50090",
+    "sdk/LICENSE": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04"
+  }
+}
