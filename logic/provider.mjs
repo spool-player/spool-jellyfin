@@ -135,7 +135,7 @@ export function createSource(configuration) {
         details: function(args, host) { return request(host, 'GET', userPath('/Items/' + opaque(args.itemId)), {Fields: fields + ',People,MediaSources,ExternalUrls'}).then(function(row) { return {item: item(row)}; }); },
         seasons: function(args, host) { return list(host, '/Shows/' + opaque(args.seriesId) + '/Seasons', args); },
         episodes: function(args, host) { return list(host, '/Shows/' + opaque(args.seriesId) + '/Episodes', args, {SeasonId: args.seasonId}); },
-        resume: function(args, host) { return list(host, '/Items/Resume', args, {MediaTypes: 'Video'}); },
+        resume: function(args, host) { return list(host, userPath('/Items/Resume'), args, {MediaTypes: 'Video'}); },
         nextUp: function(args, host) { return list(host, '/Shows/NextUp', args); },
         latest: function(args, host) { return list(host, userPath('/Items/Latest'), args, {ParentId: args.parentId}); },
         similar: function(args, host) { return list(host, '/Items/' + opaque(args.itemId) + '/Similar', args); },
