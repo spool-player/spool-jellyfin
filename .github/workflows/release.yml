@@ -48,7 +48,13 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python3 -c 'import json, os; assert os.environ["RELEASE_TAG"] == "v" + json.load(open("manifest.json"))["version"]'
       - name: Verify SDK and rebuild immutable source package
-        run: python3 tools/check-sdk.py && python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 tools/check-sdk.py
+          python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
+          VERSION_NUM="${RELEASE_TAG#v}"
+          cp dist/spool-jellyfin.zip "dist/spool-jellyfin-${VERSION_NUM}.zip"
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
           subject-path: dist/spool-jellyfin.zip
@@ -56,4 +62,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" dist/spool-jellyfin.zip --verify-tag --prerelease --title "$RELEASE_TAG" --notes 'Experimental API 0.1 source package. Not yet a parity-complete replacement for the native Spool Jellyfin client. See README for tested behavior and missing integration. GitHub provenance is not an application update catalogue.'
+        run: |
+          VERSION_NUM="${RELEASE_TAG#v}"
+          gh release create "$RELEASE_TAG" dist/spool-jellyfin.zip "dist/spool-jellyfin-${VERSION_NUM}.zip" --verify-tag --prerelease --title "$RELEASE_TAG" --notes 'Official Spool Jellyfin provider package.'
