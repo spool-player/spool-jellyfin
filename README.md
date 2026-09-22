@@ -1,27 +1,43 @@
-# Spool Jellyfin provider
+# Jellyfin for Spool
 
-Experimental portable Jellyfin client for Spool's draft API **0.1**. JavaScript API logic runs on Spool's worker QJSEngine and uses its source-bound asynchronous HTTP service. Each source factory owns its account state; there is no global current server/token.
+The Jellyfin provider for [Spool](https://github.com/spool-player/spool): sign in to a Jellyfin server,
+browse and search its libraries, play with the server's own transcoding when needed, keep watched
+state and resume points in sync, watch together with SyncPlay, and let other Jellyfin clients control
+Spool. Spool bundles it and keeps it up to date from this repository's releases.
 
-**Integration status:** this repository does not yet replace the native Jellyfin client in Spool. It is not a parity-complete production provider or an installable app update. The first source release is deliberately marked alpha. No Stremio implementation is included.
+| | |
+| --- | --- |
+| `manifest.json` | Identity, capabilities, screens and item actions (provider API 0.2) |
+| `logic/provider.mjs` | Sign-in, catalogue, playback, item actions, SyncPlay |
+| `logic/items.mjs` | Jellyfin JSON to Spool's item shape |
+| `logic/profile.mjs` | The DeviceProfile sent with every playback request |
+| `logic/events.mjs` | The server's websocket, as group, remote-control and change events |
+| `ui/Login.qml` | Servers found on the network or typed in; password or Quick Connect |
+| `ui/Picker.qml` | Choosing a playlist or collection, renaming, confirming a delete |
 
-Implemented protocol operations cover authentication/QuickConnect, libraries, bounded browse/search, details and episodic navigation, resume/next-up/latest/similar/person lists, variants, exact-media-source playback requests, artwork descriptors, user state, reports, segments, account configuration, management and remote/SyncPlay REST commands. The synthetic contract tests cover pagination, per-source token state, authentication isolation, descriptor provenance and exact variant selection; they do not independently validate every endpoint against a real Jellyfin server.
-
-Still required before native cutover: discovery integration, persisted-account migration, source-bound hosted QML, full filter/management parity, device-profile policy adaptation, audio/remux/subtitle/live-stream details, trickplay, WebSocket remote/SyncPlay lifecycle, federation, host manager/install/recovery, and differential/live-server coverage. These are missing features, not implicit capabilities supplied by the repository name.
+Several users and several servers can be signed in at once. Users of the same server are alternatives
+to each other in Spool; different servers are shown together.
 
 ## Development
 
-`createSource({server, userId, token, deviceId, deviceName, clientVersion})` returns Promise-based operations. Login can start without a user or token. The host authorises the configured server origin independently of this configuration. `resolve` requires an exact `variantId`; it fails rather than switching to another edition returned by the server. Filename metadata is a basename; the host must keep filename display off by default.
-
-The pinned small SDK snapshot under `sdk/` comes from Spool, not a nested application checkout. `sdk.lock.json` records each tooling file's SHA-256. Build its real Qt JS contract runner and test both engine modes:
+The SDK under `sdk/` is pinned from Spool (`sdk.lock.json`; `tools/check-sdk.py` verifies it).
 
 ```
-cmake -S sdk -B build/sdk
-cmake --build build/sdk
+cmake -S sdk -B build/sdk && cmake --build build/sdk
 build/sdk/provider-contract-runner tests/contract.mjs
 QV4_FORCE_INTERPRETER=1 build/sdk/provider-contract-runner tests/contract.mjs
-python3 sdk/provider-package.py build . --output build/spool-jellyfin.zip
+python3 sdk/spool-provider.py build .          # dist/spool.jellyfin-<version>.tar.zst
 ```
 
-Release CI validates the pinned tooling, runs these contracts, and packages one source ZIP for every OS/CPU. Tag releases attach GitHub build-provenance attestations and are prereleases while the version is experimental. Provenance is not a complete signed update catalogue; Spool must not activate packages merely because this workflow published them.
+`tests/contract.mjs` runs the provider against a scripted server in Qt's JS engine, the one Spool uses.
+To try a checkout in Spool without releasing it, configure Spool with
+`-DSPOOL_PROVIDER_OVERRIDES=spool.jellyfin=/path/to/spool-jellyfin`.
 
-MPL-2.0; see LICENSE and NOTICE for attribution.
+## Releasing
+
+Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
+builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool
+provider store to pick it up. Spool installs updates from there according to each viewer's update
+setting.
+
+MPL-2.0; see LICENSE and NOTICE.

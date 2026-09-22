@@ -1,4 +1,4 @@
-name: Portable provider
+name: Provider
 on:
   push:
     branches: [main]
@@ -13,25 +13,28 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Install Qt contract dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-declarative-dev
+      - name: Install Qt and zstd
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev qt6-declarative-dev zstd
       - name: Verify pinned SDK
         run: python3 tools/check-sdk.py
-      - name: Build actual Qt engine runner
+      - name: Build the contract runner
         run: cmake -S sdk -B build/sdk -G Ninja && cmake --build build/sdk
-      - name: Execute protocol contracts
+      - name: Contract (JIT)
         run: timeout 20s build/sdk/provider-contract-runner tests/contract.mjs
-      - name: Execute interpreter-only protocol contracts
+      - name: Contract (interpreter only)
         env:
           QV4_FORCE_INTERPRETER: '1'
         run: timeout 20s build/sdk/provider-contract-runner tests/contract.mjs
-      - name: Build deterministic source package
-        run: python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
+      - name: Build and validate the package
+        run: |
+          python3 sdk/spool-provider.py build . --output "dist/$(python3 -c 'import json; m = json.load(open("manifest.json")); print(m["id"] + "-" + m["version"])').tar.zst"
+          python3 sdk/spool-provider.py validate dist/*.tar.zst
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: portable-provider
-          path: dist/spool-jellyfin.zip
+          name: provider-package
+          path: dist/*.tar.zst
           if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'spool-player/spool-jellyfin'
     needs: contract
@@ -41,27 +44,42 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+    env:
+      STORE_TOKEN: ${{ secrets.STORE_DISPATCH_TOKEN }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Verify release version
+      - name: Install zstd
+        run: sudo apt-get update && sudo apt-get install -y zstd
+      - name: Build the package and its feed entry
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: python3 -c 'import json, os; assert os.environ["RELEASE_TAG"] == "v" + json.load(open("manifest.json"))["version"]'
-      - name: Verify SDK and rebuild immutable source package
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           python3 tools/check-sdk.py
-          python3 sdk/provider-package.py build . --output dist/spool-jellyfin.zip
-          VERSION_NUM="${RELEASE_TAG#v}"
-          cp dist/spool-jellyfin.zip "dist/spool-jellyfin-${VERSION_NUM}.zip"
+          ID=$(python3 -c 'import json; print(json.load(open("manifest.json"))["id"])')
+          VERSION=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+          test "$RELEASE_TAG" = "v$VERSION" || { echo "tag $RELEASE_TAG does not match manifest version $VERSION"; exit 1; }
+          PACKAGE="dist/$ID-$VERSION.tar.zst"
+          python3 sdk/spool-provider.py build . --output "$PACKAGE"
+          python3 sdk/spool-provider.py feed "$PACKAGE" \
+            --url "https://github.com/$REPOSITORY/releases/download/$RELEASE_TAG/$ID-$VERSION.tar.zst" \
+            > dist/spool-provider.json
+          cat dist/spool-provider.json
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45
         with:
-          subject-path: dist/spool-jellyfin.zip
-      - name: Publish alpha source package
+          subject-path: dist/*.tar.zst
+      - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          VERSION_NUM="${RELEASE_TAG#v}"
-          gh release create "$RELEASE_TAG" dist/spool-jellyfin.zip "dist/spool-jellyfin-${VERSION_NUM}.zip" --verify-tag --prerelease --title "$RELEASE_TAG" --notes 'Official Spool Jellyfin provider package.'
+          gh release create "$RELEASE_TAG" dist/*.tar.zst dist/spool-provider.json --verify-tag \
+            --title "$RELEASE_TAG" --notes "Jellyfin for Spool $RELEASE_TAG. Spool installs and updates it from spool-provider.json."
+      # The store picks up first-party releases on its schedule; this asks it
+      # to look now. Needs a token that can dispatch to spool-providers.
+      - name: Tell the store
+        if: env.STORE_TOKEN != ''
+        run: |
+          curl -fsS -X POST -H "Authorization: Bearer $STORE_TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/spool-player/spool-providers/dispatches \
+            -d '{"event_type":"provider-released","client_payload":{"repository":"${{ github.repository }}"}}'
