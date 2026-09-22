@@ -85,6 +85,8 @@ export function run() {
         'POST /Playlists/list-1/Items': {},
         'DELETE /Items/film': {},
         'POST /SyncPlay/Seek': {},
+        'GET /GetUtcTime': { RequestReceptionTime: '2026-01-01T00:00:00.0000000Z',
+            ResponseTransmissionTime: '2026-01-01T00:00:00.0010000Z' },
         'POST /Sessions/Playing': {}
     });
 
@@ -181,6 +183,8 @@ export function run() {
         }).then(() => {
             check(jf.calls[jf.calls.length - 1].path === '/SyncPlay/Seek', 'seek goes to SyncPlay');
             return fails(() => a.groupSend({ action: 'teleport' }, jf.host), 'invalid_group_action');
+        }).then(() => a.clock({}, jf.host)).then(clock => {
+            check(clock.received === Date.UTC(2026, 0, 1) && clock.sent === clock.received + 1, 'server clock');
         }).then(() => {
             step = 'errors';
             return fails(() => a.libraries({}, { device: device, http: () => respond({}, 401) }), 'http_401');

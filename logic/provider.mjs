@@ -352,7 +352,7 @@ export function createSource(configuration, sourceHost) {
             default: throw new Error('invalid_group_action');
             }
         },
-        clock: (args, host) => request(host, 'GET', '/SyncPlay/Time').then(result => ({
+        clock: (args, host) => request(host, 'GET', '/GetUtcTime').then(result => ({
             received: time(result.RequestReceptionTime), sent: time(result.ResponseTransmissionTime)
         })),
 
