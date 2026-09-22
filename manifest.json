@@ -1,25 +1,25 @@
 {
-  "format": 1,
+  "format": 2,
+  "api": "0.2",
   "id": "spool.jellyfin",
-  "version": "0.1.0-alpha.1",
-  "api": "0.1",
+  "name": "Jellyfin",
+  "version": "0.2.0",
+  "publisher": "Spool",
+  "summary": "Your Jellyfin server",
+  "homepage": "https://github.com/spool-player/spool-jellyfin",
+  "icon": "assets/icon.svg",
   "entry": "logic/provider.mjs",
-  "publisher": "spool-player",
-  "license": "MPL-2.0",
-  "offers": {
-    "authentication": "0.1",
-    "catalog": "0.1",
-    "search": "0.1",
-    "details": "0.1",
-    "variants": "0.1",
-    "playback": "0.1",
-    "reports": "0.1",
-    "user-state": "0.1"
+  "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
+    "groupPlayback", "remoteControl"],
+  "ui": {
+    "login": "ui/Login.qml",
+    "picker": "ui/Picker.qml"
   },
-  "requires": {"http": "0.1", "source-context": "0.1"},
-  "optional": {},
-  "permissions": ["network:configured-origins", "credentials:source"],
-  "channels": ["desktop", "webos", "android-direct", "google-play", "apple-bundled"],
-  "stateSchema": 1,
-  "ui": {"modules": [], "components": []}
+  "actions": [
+    {"id": "playlist", "label": "Add to playlist", "icon": "playlist_add",
+      "types": ["Movie", "Episode", "Series", "Season", "Audio", "MusicAlbum", "MusicVideo", "Video"]},
+    {"id": "collection", "label": "Add to collection", "icon": "library_add", "types": ["Movie", "Series"]},
+    {"id": "rename", "label": "Rename", "icon": "drive_file_rename_outline", "types": ["Playlist", "BoxSet"]},
+    {"id": "delete", "label": "Delete from server", "icon": "delete"}
+  ]
 }

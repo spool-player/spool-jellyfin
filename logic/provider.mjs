@@ -1,220 +1,365 @@
 // SPDX-License-Identifier: MPL-2.0
-// Endpoint behaviour derived from spool's JellyfinApiFacade at e0de68c18c3740bc22421b99848fa9f7b2f0e788.
-const fields = 'SortName,Overview,ProductionYear,PremiereDate,EndDate,Status,DateCreated,DateLastContentAdded,ImageTags,BackdropImageTags,UserData,RunTimeTicks,SeriesInfo,LocationType,IsVirtualItem,Genres,Tags,Studios,ProviderIds,OfficialRating,CommunityRating,CriticRating';
-const types = {movies: 'Movie', tvshows: 'Series', playlists: 'Playlist', boxsets: 'BoxSet', music: 'MusicArtist,MusicAlbum,Audio', books: 'Book,AudioBook', photos: 'PhotoAlbum,Photo', musicvideos: 'MusicVideo', homevideos: 'Folder,Video,PhotoAlbum,Photo'};
-function opaque(value) {
+// Jellyfin for Spool: one source per signed-in user.
+
+import { collectionTypes, detailFields, fields, item, page, segments, stream, time, trickplay } from './items.mjs';
+import { deviceProfile, maxBitrate } from './profile.mjs';
+import { connect } from './events.mjs';
+
+const remoteCommands = ['MoveUp', 'MoveDown', 'MoveLeft', 'MoveRight', 'PageUp', 'PageDown', 'PreviousLetter',
+    'NextLetter', 'Select', 'Back', 'SendKey', 'SendString', 'VolumeUp', 'VolumeDown', 'Mute', 'Unmute',
+    'ToggleMute', 'SetVolume', 'SetAudioStreamIndex', 'SetSubtitleStreamIndex', 'ToggleOsd', 'ToggleOsdMenu',
+    'ToggleContextMenu', 'ToggleStats', 'ToggleFullscreen', 'GoHome', 'GoToSettings', 'GoToSearch',
+    'DisplayContent', 'DisplayMessage', 'SetRepeatMode', 'SetShuffleQueue', 'SetPlaybackOrder',
+    'SetMaxStreamingBitrate', 'Play'];
+
+const browseFilters = ['Filters', 'Genres', 'OfficialRatings', 'Tags', 'Years', 'StudioIds', 'SeriesStatus',
+    'VideoTypes', 'IsHd', 'Is4K', 'Is3D', 'HasSubtitles', 'HasTrailer', 'IsMissing', 'IsUnaired', 'NameStartsWith',
+    'NameLessThan'];
+
+function quoted(value) {
+    return String(value || '').replace(/["\\\r\n]/g, '');
+}
+
+function query(values) {
+    return Object.keys(values).filter(key => values[key] !== undefined && values[key] !== null && values[key] !== '')
+        .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(String(values[key]))).join('&');
+}
+
+function segment(value) {
     if (typeof value !== 'string' || !value)
         throw new Error('missing_id');
     return encodeURIComponent(value);
 }
-function integer(value) {
-    if (value === undefined || value === null) return null;
-    if (typeof value === 'string' && /^\d+$/.test(value)) return value;
-    if (!Number.isSafeInteger(value)) throw new Error('unsafe_integer');
-    return String(value);
-}
-function item(raw) {
-    const user = raw.UserData || {};
-    const images = raw.ImageTags || {};
-    return {
-        id: String(raw.Id), title: raw.Name || '', sortName: raw.SortName || raw.Name || '',
-        type: raw.Type || 'Unknown', year: raw.ProductionYear || null,
-        overview: raw.Overview || '', externalIds: raw.ProviderIds || {},
-        seriesId: raw.SeriesId || null, seasonId: raw.SeasonId || null,
-        seriesName: raw.SeriesName || '', season: raw.ParentIndexNumber || null,
-        episode: raw.IndexNumber === undefined ? null : raw.IndexNumber,
-        runtimeTicks: integer(raw.RunTimeTicks), resumeTicks: integer(user.PlaybackPositionTicks),
-        favorite: Boolean(user.IsFavorite), played: Boolean(user.Played),
-        posterTag: images.Primary || '', backdropTag: (raw.BackdropImageTags || [])[0] || '',
-        logoTag: images.Logo || '', genres: raw.Genres || [], tags: raw.Tags || [],
-        studios: (raw.Studios || []).map(function(studio) { return studio.Name; }),
-        officialRating: raw.OfficialRating || '', communityRating: raw.CommunityRating || null,
-        people: (raw.People || []).map(function(person) {
-            return {id: String(person.Id), name: person.Name || '', type: person.Type || '', role: person.Role || '', imageTag: person.PrimaryImageTag || ''};
-        })
-    };
-}
-function stream(raw) {
-    return {
-        index: raw.Index, type: raw.Type, codec: raw.Codec || '', language: raw.Language || '',
-        title: raw.DisplayTitle || raw.Title || '', width: raw.Width || null, height: raw.Height || null,
-        channels: raw.Channels || null, bitrate: raw.BitRate || null, range: raw.VideoRangeType || raw.VideoRange || '',
-        external: Boolean(raw.IsExternal), forced: Boolean(raw.IsForced), default: Boolean(raw.IsDefault)
-    };
-}
-function variant(raw) {
-    return {
-        id: String(raw.Id), label: raw.Name || '', container: (raw.Container || '').split(',')[0],
-        sizeBytes: integer(raw.Size), bitrate: raw.Bitrate || raw.BitRate || null,
-        runtimeTicks: integer(raw.RunTimeTicks), streams: (raw.MediaStreams || []).map(stream),
-        filename: (raw.Path || '').split(/[\\/]/).pop(), metadataProvenance: 'reported'
-    };
-}
-function pageLimit(args) {
-    const limit = args.limit === undefined ? 72 : args.limit;
-    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('invalid_limit');
-    return limit;
-}
-function startIndex(args) {
-    if (args.cursor === undefined || args.cursor === null || args.cursor === '') return 0;
-    if (!/^\d+$/.test(String(args.cursor))) throw new Error('invalid_cursor');
-    const value = Number(args.cursor);
-    if (!Number.isSafeInteger(value)) throw new Error('invalid_cursor');
-    return value;
-}
-function query(values) {
-    return Object.keys(values).filter(function(key) { return values[key] !== undefined && values[key] !== null && values[key] !== ''; })
-        .map(function(key) { return encodeURIComponent(key) + '=' + encodeURIComponent(String(values[key])); }).join('&');
-}
-function quoted(value) { return String(value || '').replace(/["\\\r\n]/g, ''); }
 
-export function createSource(configuration) {
-    const server = String(configuration.server || '').replace(/\/+$/, '');
-    if (!/^https?:\/\//.test(server)) throw new Error('invalid_server');
+function start(args) {
+    const cursor = args.cursor ? String(args.cursor) : '0';
+    if (!/^\d+$/.test(cursor))
+        throw new Error('invalid_cursor');
+    return Number(cursor);
+}
+
+export function normalizeServer(input) {
+    let text = String(input || '').trim().replace(/\/+$/, '');
+    if (!/^https?:\/\//i.test(text))
+        text = 'http://' + text;
+    // A bare host gets Jellyfin's default port.
+    if (/^http:\/\/[^/:]+$/i.test(text))
+        text += ':8096';
+    return text;
+}
+
+export function createSource(configuration, sourceHost) {
+    const server = configuration.server ? normalizeServer(configuration.server) : '';
+    const device = sourceHost.device || {};
     let token = configuration.token || '';
     let userId = configuration.userId || '';
-    const deviceId = configuration.deviceId || 'spool';
-    function authorization() {
-        return 'MediaBrowser Client="Spool", Device="' + quoted(configuration.deviceName || 'Spool')
-            + '", DeviceId="' + quoted(deviceId) + '", Version="' + quoted(configuration.clientVersion || '0.1.0')
-            + '"' + (token ? ', Token="' + quoted(token) + '"' : '');
+
+    function authorization(overrideToken) {
+        const value = overrideToken === undefined ? token : overrideToken;
+        return 'MediaBrowser Client="Spool", Device="' + quoted(device.name || 'Spool') + '", DeviceId="'
+            + quoted(device.id || 'spool') + '", Version="' + quoted(device.version || '0') + '"'
+            + (value ? ', Token="' + quoted(value) + '"' : '');
     }
-    function request(host, method, path, parameters, body) {
+
+    // `base` lets sign-in talk to a server before the account exists.
+    function request(host, method, path, parameters, body, base) {
         const suffix = query(parameters || {});
-        return host.http(server + path + (suffix ? '?' + suffix : ''), {
+        return host.http((base || server) + path + (suffix ? '?' + suffix : ''), {
             method: method,
-            headers: {'Authorization': authorization(), 'Content-Type': 'application/json', 'Accept': 'application/json'},
+            headers: { Authorization: authorization(base ? '' : undefined), 'Content-Type': 'application/json',
+                Accept: 'application/json' },
             body: body === undefined ? '' : JSON.stringify(body)
-        }).then(function(response) {
-            if (response.status < 200 || response.status >= 300) throw new Error('http_' + response.status);
+        }).then(response => {
+            if (response.status < 200 || response.status >= 300)
+                throw new Error('http_' + response.status);
             return response.body ? JSON.parse(response.body) : {};
         });
     }
-    function userPath(path) { return '/Users/' + opaque(userId) + path; }
+
+    const userPath = path => '/Users/' + segment(userId) + path;
+
     function list(host, path, args, parameters) {
-        const start = startIndex(args), limit = pageLimit(args);
-        const values = Object.assign({UserId: userId, Fields: fields, EnableUserData: true}, parameters || {}, {StartIndex: start, Limit: limit});
-        return request(host, 'GET', path, values).then(function(result) {
-            const rows = Array.isArray(result) ? result : result.Items || [];
-            if (rows.length > limit) throw new Error('server_ignored_limit');
-            const total = Number.isSafeInteger(result.TotalRecordCount) ? result.TotalRecordCount : null;
-            const exhausted = total !== null ? start + rows.length >= total : rows.length < limit;
-            return {items: rows.map(item), total: total, exhausted: exhausted, cursor: exhausted ? null : String(start + rows.length)};
+        const first = start(args);
+        const limit = Math.min(Math.max(args.limit || 72, 1), 100);
+        const values = Object.assign({ UserId: userId, Fields: fields, EnableImageTypes: 'Primary,Backdrop,Logo,Thumb',
+            ImageTypeLimit: 1, EnableUserData: true }, parameters || {}, { StartIndex: first, Limit: limit });
+        return request(host, 'GET', path, values).then(result => page(result, first, limit));
+    }
+
+    function signIn(host, base, path, body) {
+        return request(host, 'POST', path, {}, body, base).then(result => {
+            if (!result.AccessToken || !result.User || !result.User.Id)
+                throw new Error('invalid_credentials');
+            return request(host, 'GET', '/System/Info/Public', {}, undefined, base).then(info => ({
+                account: result.User.Id + '@' + (result.ServerId || info.Id || base),
+                group: result.ServerId || info.Id || base,
+                label: result.User.Name || '',
+                detail: info.ServerName || base.replace(/^https?:\/\//, ''),
+                configuration: { server: base, userId: result.User.Id, token: result.AccessToken,
+                    userName: result.User.Name || '', serverId: result.ServerId || info.Id || '',
+                    serverName: info.ServerName || '' }
+            }));
         });
     }
-    function authenticate(host, path, payload) {
-        return request(host, 'POST', path, {}, payload).then(function(result) {
-            if (!result.AccessToken || !result.User || !result.User.Id) throw new Error('invalid_authentication');
-            token = result.AccessToken;
-            userId = result.User.Id;
-            return {userId: userId, token: token, name: result.User.Name || '', serverId: result.ServerId || ''};
-        });
+
+    // Live updates, group playback and remote commands arrive here.
+    let disconnect = null;
+    if (server && token && sourceHost.socket) {
+        const socketUrl = server.replace(/^http/i, 'ws') + '/socket?' + query({ api_key: token, deviceId: device.id });
+        disconnect = connect(sourceHost, socketUrl, { Authorization: authorization() });
+        // Tell the server what this client can be asked to do.
+        sourceHost.http(server + '/Sessions/Capabilities/Full', {
+            method: 'POST',
+            headers: { Authorization: authorization(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ PlayableMediaTypes: ['Video', 'Audio'], SupportedCommands: remoteCommands,
+                SupportsMediaControl: true, SupportsPersistentIdentifier: true })
+        }).then(() => {}, () => {});
     }
-    const api = {
-        authenticate: function(args, host) { return authenticate(host, '/Users/AuthenticateByName', {Username: args.username, Pw: args.password}); },
-        quickConnectEnabled: function(args, host) { return request(host, 'GET', '/QuickConnect/Enabled').then(function(enabled) { return {enabled: enabled === true}; }); },
-        quickConnectInitiate: function(args, host) { return request(host, 'POST', '/QuickConnect/Initiate'); },
-        quickConnectPoll: function(args, host) { return request(host, 'GET', '/QuickConnect/Connect', {Secret: args.secret}); },
-        quickConnectAuthenticate: function(args, host) { return authenticate(host, '/Users/AuthenticateWithQuickConnect', {Secret: args.secret}); },
-        libraries: function(args, host) {
-            return request(host, 'GET', userPath('/Views')).then(function(result) {
-                return {items: (result.Items || []).map(function(row) { return {id: String(row.Id), title: row.Name || '', collectionType: row.CollectionType || '', posterTag: (row.ImageTags || {}).Primary || ''}; })};
+
+    function groupAction(host, path, body) {
+        return request(host, 'POST', '/SyncPlay/' + path, {}, body || {}).then(() => ({}));
+    }
+
+    return {
+        describe: () => ({
+            artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}',
+            trickplay: server + '/Videos/{itemId}/Trickplay/{width}/{index}.jpg?MediaSourceId={variantId}'
+        }),
+
+        // Sign-in. These run before the account exists, against `server`
+        // given in the arguments, once the screen has allowed that origin.
+        discover: (args, host) => host.discover({ port: 7359, message: 'who is JellyfinServer?', timeout: 1500 })
+            .then(replies => {
+                const servers = {};
+                for (const reply of replies) {
+                    try {
+                        const info = JSON.parse(reply.text);
+                        if (info.Id && info.Address)
+                            servers[info.Id] = { id: info.Id, name: info.Name || info.Address, address: info.Address };
+                    } catch (error) {}
+                }
+                return { servers: Object.values(servers) };
+            }),
+        probe: (args, host) => {
+            const base = normalizeServer(args.server);
+            return request(host, 'GET', '/System/Info/Public', {}, undefined, base).then(info => {
+                if (!info.Id)
+                    throw new Error('not_jellyfin');
+                return request(host, 'GET', '/Users/Public', {}, undefined, base).then(users => ({
+                    server: base, id: info.Id, name: info.ServerName || '', version: info.Version || '',
+                    users: (Array.isArray(users) ? users : []).map(u => ({ id: u.Id, name: u.Name,
+                        image: u.PrimaryImageTag ? base + '/Users/' + u.Id + '/Images/Primary?tag=' + u.PrimaryImageTag + '&maxWidth=160' : '',
+                        hasPassword: u.HasPassword !== false }))
+                }), () => ({ server: base, id: info.Id, name: info.ServerName || '', users: [] }));
             });
         },
-        browse: function(args, host) {
-            const filters = args.filters || {};
-            const parameters = {ParentId: args.parentId, Recursive: args.recursive !== false, IncludeItemTypes: types[args.collectionType], SortBy: args.sortBy || 'SortName', SortOrder: args.sortOrder || 'Ascending'};
-            const allowed = ['Filters', 'Genres', 'OfficialRatings', 'Tags', 'Years', 'StudioIds', 'SeriesStatus', 'VideoTypes', 'IsHd', 'Is4K', 'Is3D', 'HasSubtitles', 'HasTrailer', 'IsMissing', 'IsUnaired', 'NameStartsWith', 'NameLessThan'];
-            Object.keys(filters).forEach(function(key) {
-                if (allowed.indexOf(key) < 0) throw new Error('unsupported_filter');
-                parameters[key] = Array.isArray(filters[key]) ? filters[key].join(['Genres', 'OfficialRatings', 'Tags', 'StudioIds'].indexOf(key) >= 0 ? '|' : ',') : filters[key];
+        authenticate: (args, host) => signIn(host, normalizeServer(args.server), '/Users/AuthenticateByName',
+            { Username: args.username, Pw: args.password || '' }),
+        quickConnectStart: (args, host) => {
+            const base = normalizeServer(args.server);
+            return request(host, 'POST', '/QuickConnect/Initiate', {}, undefined, base)
+                .then(result => ({ code: result.Code, secret: result.Secret }));
+        },
+        quickConnectPoll: (args, host) => {
+            const base = normalizeServer(args.server);
+            return request(host, 'GET', '/QuickConnect/Connect', { Secret: args.secret }, undefined, base).then(result => {
+                if (!result.Authenticated)
+                    return { authenticated: false };
+                return signIn(host, base, '/Users/AuthenticateWithQuickConnect', { Secret: args.secret })
+                    .then(account => ({ authenticated: true, account: account }));
             });
+        },
+
+        libraries: (args, host) => request(host, 'GET', userPath('/Views')).then(result => ({
+            items: (result.Items || []).map(row => ({ id: row.Id, title: row.Name || '',
+                collectionType: row.CollectionType || '', posterTag: (row.ImageTags || {}).Primary || '' }))
+        })),
+        browse: (args, host) => {
+            const filters = Object.assign({}, args.filters || {});
+            if (args.genre)
+                filters.Genres = [args.genre];
+            if (args.studio)
+                filters.Studios = [args.studio];
+            const parameters = { ParentId: args.parentId, Recursive: args.recursive !== false,
+                IncludeItemTypes: collectionTypes[args.collectionType], SortBy: args.sortBy || 'SortName',
+                SortOrder: args.sortOrder || 'Ascending' };
+            for (const key of Object.keys(filters)) {
+                if (browseFilters.indexOf(key) < 0 && key !== 'Studios')
+                    continue;
+                const value = filters[key];
+                parameters[key] = Array.isArray(value)
+                    ? value.join(['Genres', 'OfficialRatings', 'Tags', 'StudioIds', 'Studios'].indexOf(key) >= 0 ? '|' : ',')
+                    : value;
+            }
             return list(host, '/Items', args, parameters);
         },
-        search: function(args, host) { return list(host, '/Items', args, {SearchTerm: args.query, Recursive: true, IncludeItemTypes: 'Movie,Series,Episode,MusicVideo,Video,Audio,MusicAlbum,MusicArtist,Book,AudioBook'}); },
-        details: function(args, host) { return request(host, 'GET', userPath('/Items/' + opaque(args.itemId)), {Fields: fields + ',People,MediaSources,ExternalUrls'}).then(function(row) { return {item: item(row)}; }); },
-        seasons: function(args, host) { return list(host, '/Shows/' + opaque(args.seriesId) + '/Seasons', args); },
-        episodes: function(args, host) { return list(host, '/Shows/' + opaque(args.seriesId) + '/Episodes', args, {SeasonId: args.seasonId}); },
-        resume: function(args, host) { return list(host, userPath('/Items/Resume'), args, {MediaTypes: 'Video'}); },
-        nextUp: function(args, host) { return list(host, '/Shows/NextUp', args); },
-        latest: function(args, host) { return list(host, userPath('/Items/Latest'), args, {ParentId: args.parentId}); },
-        similar: function(args, host) { return list(host, '/Items/' + opaque(args.itemId) + '/Similar', args); },
-        personItems: function(args, host) { return list(host, '/Items', args, {PersonIds: args.personId, Recursive: true}); },
-        filterOptions: function(args, host) { return request(host, 'GET', '/Items/Filters2', {UserId: userId, ParentId: args.parentId, IncludeItemTypes: types[args.collectionType]}); },
-        variants: function(args, host) {
-            return request(host, 'GET', userPath('/Items/' + opaque(args.itemId)), {Fields: 'MediaSources'}).then(function(result) {
-                return {variants: (result.MediaSources || []).map(variant)};
-            });
+        items: (args, host) => list(host, '/Items', args, { Ids: (args.ids || []).join(',') }),
+        search: (args, host) => list(host, '/Items', args, { SearchTerm: args.query, Recursive: true,
+            IncludeItemTypes: 'Movie,Series,Episode,MusicVideo,Video,Audio,MusicAlbum,MusicArtist,Book,AudioBook,BoxSet,Playlist' }),
+        details: (args, host) => request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: detailFields })
+            .then(raw => ({ item: item(raw) })),
+        seasons: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Seasons', args),
+        episodes: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Episodes', args,
+            { SeasonId: args.seasonId, Fields: fields + ',MediaSources' }),
+        resume: (args, host) => list(host, userPath('/Items/Resume'), args, { MediaTypes: 'Video' }),
+        nextUp: (args, host) => list(host, '/Shows/NextUp', args),
+        latest: (args, host) => {
+            const limit = Math.min(Math.max(args.limit || 24, 1), 100);
+            return request(host, 'GET', userPath('/Items/Latest'), { ParentId: args.parentId, Limit: limit,
+                Fields: fields, EnableUserData: true }).then(rows => page(rows, 0, limit + 1));
         },
-        resolve: function(args, host) {
-            opaque(args.variantId);
-            return request(host, 'POST', '/Items/' + opaque(args.itemId) + '/PlaybackInfo', {}, {
-                UserId: userId, MediaSourceId: args.variantId, StartTimeTicks: args.positionTicks || 0,
-                MaxStreamingBitrate: args.maxBitrate || 120000000, DeviceProfile: args.deviceProfile,
-                AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex,
-                EnableDirectPlay: !args.forceTranscode, EnableDirectStream: !args.forceTranscode,
-                EnableTranscoding: true, AutoOpenLiveStream: true
-            }).then(function(result) {
-                if (result.ErrorCode) throw new Error('playback_unavailable');
-                const source = (result.MediaSources || []).filter(function(value) { return value.Id === args.variantId; })[0];
-                if (!source) throw new Error('selected_variant_unavailable');
-                let url, playMethod;
-                if (!args.forceTranscode && (source.SupportsDirectPlay || source.SupportsDirectStream)) {
-                    url = server + '/Videos/' + opaque(args.itemId) + '/stream?' + query({Static: true, MediaSourceId: source.Id, DeviceId: deviceId, PlaySessionId: result.PlaySessionId});
+        similar: (args, host) => list(host, '/Items/' + segment(args.itemId) + '/Similar', args),
+        personItems: (args, host) => list(host, '/Items', args, { PersonIds: args.personId, Recursive: true,
+            SortBy: 'PremiereDate,ProductionYear,SortName', SortOrder: 'Descending' }),
+        filterOptions: (args, host) => request(host, 'GET', '/Items/Filters', { UserId: userId, ParentId: args.parentId,
+            IncludeItemTypes: collectionTypes[args.collectionType] }).then(result => ({
+            genres: result.Genres || [], years: result.Years || [], officialRatings: result.OfficialRatings || [],
+            tags: result.Tags || []
+        })),
+
+        resolve: (args, host) => {
+            const playbackInfo = request(host, 'POST', '/Items/' + segment(args.itemId) + '/PlaybackInfo',
+                { UserId: userId }, {
+                    UserId: userId, MediaSourceId: args.variantId, StartTimeTicks: Number(args.positionTicks) || 0,
+                    MaxStreamingBitrate: maxBitrate(args), DeviceProfile: deviceProfile(args),
+                    AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex,
+                    EnableDirectPlay: !args.forceTranscode, EnableDirectStream: !args.forceTranscode,
+                    EnableTranscoding: true, AutoOpenLiveStream: true, AllowVideoStreamCopy: true, AllowAudioStreamCopy: true
+                });
+            // Trickplay and skip markers come from other endpoints; ask at once.
+            const details = request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: 'Trickplay' })
+                .then(raw => raw, () => null);
+            const markers = request(host, 'GET', '/MediaSegments/' + segment(args.itemId)).then(segments, () => []);
+            return Promise.all([playbackInfo, details, markers]).then(([info, raw, skip]) => {
+                if (info.ErrorCode)
+                    throw new Error('playback_unavailable');
+                const sources = info.MediaSources || [];
+                const source = args.variantId ? sources.find(s => s.Id === args.variantId) : sources[0];
+                // Never swap in a different edition than the one asked for.
+                if (!source)
+                    throw new Error('selected_variant_unavailable');
+                let url;
+                let playMethod;
+                const direct = !args.forceTranscode && (source.SupportsDirectPlay || (source.SupportsDirectStream && args.preferRemux));
+                if (direct || (!source.TranscodingUrl && source.SupportsDirectStream)) {
+                    url = server + '/Videos/' + segment(args.itemId) + '/stream?' + query({ static: true,
+                        MediaSourceId: source.Id, DeviceId: device.id, PlaySessionId: info.PlaySessionId });
                     playMethod = source.SupportsDirectPlay ? 'DirectPlay' : 'DirectStream';
                 } else if (source.TranscodingUrl) {
-                    if (/^https?:\/\//.test(source.TranscodingUrl)) {
-                        // Do not attach this server's credential to another host.
-                        if (source.TranscodingUrl.indexOf(server + '/') !== 0) throw new Error('cross_origin_stream');
-                        url = source.TranscodingUrl;
-                    } else {
-                        url = server + '/' + source.TranscodingUrl.replace(/^\/+/, '');
-                    }
+                    // A credential for this server never goes to another host.
+                    if (/^https?:\/\//i.test(source.TranscodingUrl) && source.TranscodingUrl.indexOf(server + '/') !== 0)
+                        throw new Error('cross_origin_stream');
+                    url = /^https?:\/\//i.test(source.TranscodingUrl) ? source.TranscodingUrl
+                                                                      : server + '/' + source.TranscodingUrl.replace(/^\/+/, '');
                     playMethod = 'Transcode';
-                } else throw new Error('selected_variant_unplayable');
-                return {itemId: args.itemId, variantId: source.Id, playSessionId: result.PlaySessionId || '', playMethod: playMethod,
-                    video: {url: url, headers: {'X-Emby-Token': token}, origin: server}, streams: (source.MediaStreams || []).map(stream)};
+                } else {
+                    throw new Error('selected_variant_unplayable');
+                }
+                return { url: url, headers: { 'X-Emby-Token': token }, variantId: source.Id,
+                    playSessionId: info.PlaySessionId || '', playMethod: playMethod,
+                    container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(stream),
+                    segments: skip, trickplay: trickplay(raw, source.Id) };
             });
         },
-        artwork: function(args) { return {url: server + '/Items/' + opaque(args.itemId) + '/Images/' + opaque(args.kind || 'Primary') + '?' + query({tag: args.tag, maxWidth: args.width}), headers: {'X-Emby-Token': token}, origin: server}; },
-        favorite: function(args, host) { return request(host, args.value ? 'POST' : 'DELETE', userPath('/FavoriteItems/' + opaque(args.itemId))); },
-        played: function(args, host) { return request(host, args.value ? 'POST' : 'DELETE', userPath('/PlayedItems/' + opaque(args.itemId))); },
-        progress: function(args, host) { return request(host, 'POST', userPath('/Items/' + opaque(args.itemId) + '/UserData'), {}, {PlaybackPositionTicks: args.positionTicks}); },
-        segments: function(args, host) { return request(host, 'GET', '/MediaSegments/' + opaque(args.itemId)).then(function(result) { return {segments: result.Items || []}; }); },
-        report: function(args, host) {
-            const endpoints = {start: '/Sessions/Playing', progress: '/Sessions/Playing/Progress', stop: '/Sessions/Playing/Stopped'};
-            if (!endpoints[args.event]) throw new Error('invalid_report');
-            return request(host, 'POST', endpoints[args.event], {}, {ItemId: args.itemId, MediaSourceId: args.variantId, PlaySessionId: args.playSessionId, PositionTicks: args.positionTicks || 0,
-                IsPaused: Boolean(args.paused), IsMuted: Boolean(args.muted), VolumeLevel: args.volume, PlaybackRate: args.rate || 1, PlayMethod: args.playMethod,
-                AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex, CanSeek: true});
+        segments: (args, host) => request(host, 'GET', '/MediaSegments/' + segment(args.itemId))
+            .then(result => ({ segments: segments(result) })),
+        report: (args, host) => {
+            const endpoint = { start: '/Sessions/Playing', progress: '/Sessions/Playing/Progress',
+                stop: '/Sessions/Playing/Stopped' }[args.event];
+            if (!endpoint)
+                throw new Error('invalid_report');
+            const index = value => (Number.isInteger(value) && value >= 0 ? value : undefined);
+            return request(host, 'POST', endpoint, {}, {
+                ItemId: args.itemId, MediaSourceId: args.variantId, PlaySessionId: args.playSessionId,
+                PositionTicks: Number(args.positionTicks) || 0, IsPaused: Boolean(args.paused),
+                IsMuted: Boolean(args.muted), VolumeLevel: args.volume, PlaybackRate: args.rate || 1,
+                PlayMethod: args.playMethod, AudioStreamIndex: index(args.audioStreamIndex),
+                SubtitleStreamIndex: index(args.subtitleStreamIndex), CanSeek: true, Failed: Boolean(args.failed)
+            }).then(() => ({}));
         },
-        user: function(args, host) { return request(host, 'GET', userPath('')); },
-        userConfiguration: function(args, host) { return request(host, 'POST', userPath('/Configuration'), {}, args.configuration); },
-        cultures: function(args, host) { return request(host, 'GET', '/Localization/Cultures').then(function(values) { return {items: values}; }); },
-        sessions: function(args, host) { return request(host, 'GET', '/Sessions', {ControllableByUserId: userId}).then(function(values) { return {items: values}; }); },
-        remotePlay: function(args, host) { return request(host, 'POST', '/Sessions/' + opaque(args.sessionId) + '/Playing', {ItemIds: args.itemIds.join(','), PlayCommand: args.command || 'PlayNow', StartIndex: args.index, StartPositionTicks: args.positionTicks, MediaSourceId: args.variantId}); },
-        remoteState: function(args, host) { return request(host, 'POST', '/Sessions/' + opaque(args.sessionId) + '/Playing/' + opaque(args.command), {SeekPositionTicks: args.positionTicks}); },
-        remoteCommand: function(args, host) { return request(host, 'POST', '/Sessions/' + opaque(args.sessionId) + '/Command', {}, {Name: args.command, Arguments: args.arguments || {}}); },
-        rename: function(args, host) { return request(host, 'GET', '/Items/' + opaque(args.itemId)).then(function(raw) { raw.Name = args.name; return request(host, 'POST', '/Items/' + opaque(args.itemId), {}, raw); }); },
-        deleteItem: function(args, host) { return request(host, 'DELETE', '/Items/' + opaque(args.itemId)); },
-        createPlaylist: function(args, host) { return request(host, 'POST', '/Playlists', {}, {Name: args.name, Ids: args.itemIds || [], UserId: userId}); },
-        playlistAdd: function(args, host) { return request(host, 'POST', '/Playlists/' + opaque(args.playlistId) + '/Items', {Ids: args.itemIds.join(','), UserId: userId}); },
-        playlistRemove: function(args, host) { return request(host, 'DELETE', '/Playlists/' + opaque(args.playlistId) + '/Items', {EntryIds: args.entryIds.join(',')}); },
-        playlistMove: function(args, host) { return request(host, 'POST', '/Playlists/' + opaque(args.playlistId) + '/Items/' + opaque(args.entryId) + '/Move/' + args.index); },
-        createCollection: function(args, host) { return request(host, 'POST', '/Collections', {Name: args.name, Ids: (args.itemIds || []).join(',')}); },
-        collectionAdd: function(args, host) { return request(host, 'POST', '/Collections/' + opaque(args.collectionId) + '/Items', {Ids: args.itemIds.join(',')}); },
-        collectionRemove: function(args, host) { return request(host, 'DELETE', '/Collections/' + opaque(args.collectionId) + '/Items', {Ids: args.itemIds.join(',')}); },
-        groups: function(args, host) { return request(host, 'GET', '/SyncPlay/List').then(function(values) { return {items: values}; }); },
-        groupCreate: function(args, host) { return request(host, 'POST', '/SyncPlay/New', {}, {GroupName: args.name}); },
-        groupJoin: function(args, host) { return request(host, 'POST', '/SyncPlay/Join', {}, {GroupId: args.groupId}); },
-        groupLeave: function(args, host) { return request(host, 'POST', '/SyncPlay/Leave'); },
-        groupCommand: function(args, host) {
-            const commands = ['Pause', 'Unpause', 'Seek', 'Ping', 'Buffering', 'Ready', 'SetNewQueue', 'NextItem', 'PreviousItem', 'Queue', 'MovePlaylistItem', 'RemoveFromPlaylist', 'SetPlaylistItem'];
-            if (commands.indexOf(args.command) < 0) throw new Error('invalid_group_command');
-            return request(host, 'POST', '/SyncPlay/' + args.command, {}, args.data || {});
+
+        favorite: (args, host) => request(host, args.value ? 'POST' : 'DELETE',
+            userPath('/FavoriteItems/' + segment(args.itemId))).then(() => ({})),
+        played: (args, host) => request(host, args.value ? 'POST' : 'DELETE',
+            userPath('/PlayedItems/' + segment(args.itemId))).then(() => ({})),
+        progress: (args, host) => request(host, 'POST', userPath('/Items/' + segment(args.itemId) + '/UserData'), {},
+            { PlaybackPositionTicks: Number(args.positionTicks) || 0 }).then(() => ({})),
+
+        // Item menu actions from manifest.json; `pick` shows ui/Picker.qml.
+        runItemAction: (args, host) => {
+            const id = segment(args.itemId);
+            switch (args.action) {
+            case 'playlist':
+            case 'collection':
+                if (!args.targetId && !args.newName)
+                    return { pick: { kind: args.action, itemId: args.itemId } };
+                if (args.newName) {
+                    return args.action === 'playlist'
+                        ? request(host, 'POST', '/Playlists', {}, { Name: args.newName, Ids: [args.itemId], UserId: userId })
+                            .then(() => ({ message: 'Added to ' + args.newName }))
+                        : request(host, 'POST', '/Collections', { Name: args.newName, Ids: args.itemId })
+                            .then(() => ({ message: 'Added to ' + args.newName }));
+                }
+                return request(host, 'POST', (args.action === 'playlist' ? '/Playlists/' : '/Collections/')
+                    + segment(args.targetId) + '/Items', { Ids: args.itemId, UserId: userId })
+                    .then(() => ({ message: 'Added to ' + (args.targetName || args.action) }));
+            case 'rename':
+                if (!args.newName)
+                    return { pick: { kind: 'rename', itemId: args.itemId } };
+                return request(host, 'GET', userPath('/Items/' + id)).then(raw => {
+                    raw.Name = args.newName;
+                    return request(host, 'POST', '/Items/' + id, {}, raw);
+                }).then(() => ({ changed: true, itemId: args.itemId, message: 'Renamed' }));
+            case 'delete':
+                if (!args.confirmed)
+                    return { pick: { kind: 'confirm', itemId: args.itemId } };
+                return request(host, 'DELETE', '/Items/' + id).then(() => ({ changed: true, message: 'Deleted' }));
+            default:
+                throw new Error('unsupported_action');
+            }
         },
-        utcTime: function(args, host) { return request(host, 'GET', '/GetUTCTime'); },
-        signOut: function() { token = ''; userId = ''; return {}; }
+        // Where an item could be added, for the picker.
+        targets: (args, host) => request(host, 'GET', '/Items', { UserId: userId, Recursive: true,
+            IncludeItemTypes: args.kind === 'playlist' ? 'Playlist' : 'BoxSet', SortBy: 'SortName', Limit: 500 })
+            .then(result => ({ items: (result.Items || []).map(row => ({ id: row.Id, title: row.Name || '' })) })),
+
+        groups: (args, host) => request(host, 'GET', '/SyncPlay/List').then(groups => ({
+            items: (Array.isArray(groups) ? groups : []).map(g => ({ id: g.GroupId, name: g.GroupName || '',
+                participants: g.Participants || [] }))
+        })),
+        groupCreate: (args, host) => groupAction(host, 'New', { GroupName: args.name }),
+        groupJoin: (args, host) => groupAction(host, 'Join', { GroupId: args.groupId }),
+        groupLeave: (args, host) => groupAction(host, 'Leave'),
+        groupSend: (args, host) => {
+            const entry = args.entryId || '00000000-0000-0000-0000-000000000000';
+            switch (args.action) {
+            case 'pause': return groupAction(host, 'Pause');
+            case 'unpause': return groupAction(host, 'Unpause');
+            case 'seek': return groupAction(host, 'Seek', { PositionTicks: Number(args.positionTicks) || 0 });
+            case 'next': return groupAction(host, 'NextItem', { PlaylistItemId: entry });
+            case 'previous': return groupAction(host, 'PreviousItem', { PlaylistItemId: entry });
+            case 'play': return groupAction(host, 'SetPlaylistItem', { PlaylistItemId: entry });
+            case 'setQueue': return groupAction(host, 'SetNewQueue', { PlayingQueue: args.itemIds,
+                PlayingItemPosition: args.index, StartPositionTicks: Number(args.positionTicks) || 0 });
+            case 'queue': return groupAction(host, 'Queue', { ItemIds: args.itemIds, Mode: args.next ? 'QueueNext' : 'Queue' });
+            case 'move': return groupAction(host, 'MovePlaylistItem', { PlaylistItemId: entry, NewIndex: Math.max(0, args.index) });
+            case 'remove': return groupAction(host, 'RemoveFromPlaylist', { PlaylistItemIds: args.entryIds,
+                ClearPlaylist: false, ClearPlayingItem: false });
+            case 'buffering': return groupAction(host, args.buffering ? 'Buffering' : 'Ready', {
+                When: new Date(args.at).toISOString(), PositionTicks: Number(args.positionTicks) || 0,
+                IsPlaying: Boolean(args.playing), PlaylistItemId: entry });
+            case 'ping': return groupAction(host, 'Ping', { Ping: Math.round(args.ms) });
+            default: throw new Error('invalid_group_action');
+            }
+        },
+        clock: (args, host) => request(host, 'GET', '/SyncPlay/Time').then(result => ({
+            received: time(result.RequestReceptionTime), sent: time(result.ResponseTransmissionTime)
+        })),
+
+        signOut: (args, host) => {
+            if (disconnect)
+                disconnect();
+            return request(host, 'POST', '/Sessions/Logout').then(() => ({}), () => ({}));
+        }
     };
-    return api;
 }
