@@ -22,8 +22,11 @@ FocusScope {
 
     Component.onCompleted: {
         if (choosing)
-            provider.requestList("targets", { "kind": kind })
-        Qt.callLater(() => choosing ? InputKeys.focus(list) : kind === "rename" ? name.focusRow() : InputKeys.focus(confirm))
+            provider.requestList("targets", {
+                                     "kind": kind
+                                 })
+        Qt.callLater(() => choosing ? InputKeys.focus(list) : kind === "rename" ? name.focusRow() : InputKeys.focus(
+                                                                                      confirm))
     }
 
     ColumnLayout {
@@ -32,8 +35,12 @@ FocusScope {
         spacing: Metrics.scaled(12)
 
         AppText {
-            text: ({ "playlist": "Add to playlist", "collection": "Add to collection", "rename": "Rename",
-                     "confirm": "Delete from the server?" })[root.kind] || ""
+            text: ({
+                       "playlist": "Add to playlist",
+                       "collection": "Add to collection",
+                       "rename": "Rename",
+                       "confirm": "Delete from the server?"
+                   })[root.kind] || ""
             font.pixelSize: Metrics.titleSizePx
             font.weight: Font.DemiBold
         }
@@ -55,7 +62,10 @@ FocusScope {
                 iconName: "playlist_play"
                 highlighted: ListView.isCurrentItem && list.activeFocus
                 onHovered: list.currentIndex = index
-                onActivated: root.provider.complete({ "targetId": record.id, "targetName": record.title })
+                onActivated: root.provider.complete({
+                                                        "targetId": record.id,
+                                                        "targetName": record.title
+                                                    })
             }
             function activate() {
                 if (currentItem)
@@ -69,7 +79,9 @@ FocusScope {
             visible: root.choosing || root.kind === "rename"
             label: root.choosing ? "New " + root.kind : "Name"
             onAccepted: if (text.trim().length > 0)
-                            root.provider.complete({ "newName": text.trim() })
+                            root.provider.complete({
+                                                       "newName": text.trim()
+                                                   })
         }
 
         RowLayout {
@@ -85,8 +97,11 @@ FocusScope {
                 visible: root.kind === "confirm" || name.text.trim().length > 0
                 kind: root.kind === "confirm" ? "danger" : "primary"
                 text: root.kind === "confirm" ? "Delete" : root.choosing ? "Create" : "Save"
-                onClicked: root.provider.complete(root.kind === "confirm" ? { "confirmed": true }
-                                                                          : { "newName": name.text.trim() })
+                onClicked: root.provider.complete(root.kind === "confirm" ? {
+                                                                                "confirmed": true
+                                                                            } : {
+                                                      "newName": name.text.trim()
+                                                  })
             }
         }
     }

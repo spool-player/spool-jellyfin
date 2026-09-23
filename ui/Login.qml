@@ -18,12 +18,12 @@ FocusScope {
     property string quickSecret: ""
 
     readonly property var messages: ({
-            "http_401": "Wrong username or password",
-            "invalid_credentials": "Wrong username or password",
-            "not_jellyfin": "Not a Jellyfin server",
-            "origin_denied": "Not a server address",
-            "quick_connect_off": "Quick Connect is off on this server"
-        })
+                                         "http_401": "Wrong username or password",
+                                         "invalid_credentials": "Wrong username or password",
+                                         "not_jellyfin": "Not a Jellyfin server",
+                                         "origin_denied": "Not a server address",
+                                         "quick_connect_off": "Quick Connect is off on this server"
+                                     })
 
     function fail(code) {
         busy = false
@@ -47,31 +47,40 @@ FocusScope {
         const address = normalized(input)
         busy = true
         error = ""
-        provider.allowOrigin(address).then(() => provider.request("probe", { "server": address })).then(result => {
-            busy = false
-            server = result
-            step = "account"
-            Qt.callLater(() => (server.users || []).length > 0 ? InputKeys.focus(users) : usernameField.focusRow())
-        }, fail)
+        provider.allowOrigin(address).then(() => provider.request("probe", {
+                                                                      "server": address
+                                                                  })).then(result => {
+                                                                      busy = false
+                                                                      server = result
+                                                                      step = "account"
+                                                                      Qt.callLater(() => (server.users || []).length
+                                                                              > 0 ? InputKeys.focus(users) :
+                                                                                    usernameField.focusRow())
+                                                                  }, fail)
     }
 
     function signIn(name, password) {
         busy = true
         error = ""
-        provider.request("authenticate", { "server": server.server, "username": name, "password": password })
-            .then(account => provider.complete(account), fail)
+        provider.request("authenticate", {
+                             "server": server.server,
+                             "username": name,
+                             "password": password
+                         }).then(account => provider.complete(account), fail)
     }
 
     function startQuickConnect() {
         busy = true
         error = ""
-        provider.request("quickConnectStart", { "server": server.server }).then(result => {
-            busy = false
-            quickCode = result.code
-            quickSecret = result.secret
-            step = "quick"
-            poll.start()
-        }, () => fail("quick_connect_off"))
+        provider.request("quickConnectStart", {
+                             "server": server.server
+                         }).then(result => {
+                             busy = false
+                             quickCode = result.code
+                             quickSecret = result.secret
+                             step = "quick"
+                             poll.start()
+                         }, () => fail("quick_connect_off"))
     }
 
     function back() {
@@ -102,13 +111,15 @@ FocusScope {
         id: poll
         interval: 5000
         repeat: true
-        onTriggered: root.provider.request("quickConnectPoll", { "server": root.server.server, "secret": root.quickSecret })
-                     .then(result => {
-                         if (result.authenticated) {
-                             poll.stop()
-                             root.provider.complete(result.account)
-                         }
-                     }, () => {})
+        onTriggered: root.provider.request("quickConnectPoll", {
+                                               "server": root.server.server,
+                                               "secret": root.quickSecret
+                                           }).then(result => {
+                                               if (result.authenticated) {
+                                                   poll.stop()
+                                                   root.provider.complete(result.account)
+                                               }
+                                           }, () => {})
     }
 
     Flickable {
