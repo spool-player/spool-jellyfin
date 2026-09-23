@@ -12,9 +12,12 @@ const remoteCommands = ['MoveUp', 'MoveDown', 'MoveLeft', 'MoveRight', 'PageUp',
     'DisplayContent', 'DisplayMessage', 'SetRepeatMode', 'SetShuffleQueue', 'SetPlaybackOrder',
     'SetMaxStreamingBitrate', 'Play'];
 
-const browseFilters = ['Filters', 'Genres', 'OfficialRatings', 'Tags', 'Years', 'StudioIds', 'SeriesStatus',
-    'VideoTypes', 'IsHd', 'Is4K', 'Is3D', 'HasSubtitles', 'HasTrailer', 'IsMissing', 'IsUnaired', 'NameStartsWith',
-    'NameLessThan'];
+// sdk BrowseFilters keys this server takes as they are (its query names are
+// case-insensitive); lists of names are joined with |, the rest with commas.
+const browseFilters = ['filters', 'genres', 'officialRatings', 'tags', 'years', 'studioIds', 'seriesStatus',
+    'videoTypes', 'includeItemTypes', 'isHd', 'is4K', 'is3D', 'hasSubtitles', 'hasTrailer', 'hasSpecialFeature',
+    'hasThemeSong', 'hasThemeVideo', 'isMissing', 'isUnaired'];
+const pipeLists = ['genres', 'officialRatings', 'tags', 'studioIds'];
 
 function quoted(value) {
     return String(value || '').replace(/["\\\r\n]/g, '');
@@ -175,22 +178,21 @@ export function createSource(configuration, sourceHost) {
                 collectionType: row.CollectionType || '', posterTag: (row.ImageTags || {}).Primary || '' }))
         })),
         browse: (args, host) => {
-            const filters = Object.assign({}, args.filters || {});
-            if (args.genre)
-                filters.Genres = [args.genre];
-            if (args.studio)
-                filters.Studios = [args.studio];
+            const filters = args.filters || {};
             const parameters = { ParentId: args.parentId, Recursive: args.recursive !== false,
                 IncludeItemTypes: collectionTypes[args.collectionType], SortBy: args.sortBy || 'SortName',
-                SortOrder: args.sortOrder || 'Ascending' };
-            for (const key of Object.keys(filters)) {
-                if (browseFilters.indexOf(key) < 0 && key !== 'Studios')
-                    continue;
+                SortOrder: args.sortOrder || 'Ascending', Genres: args.genre, Studios: args.studio };
+            for (const key of browseFilters) {
                 const value = filters[key];
-                parameters[key] = Array.isArray(value)
-                    ? value.join(['Genres', 'OfficialRatings', 'Tags', 'StudioIds', 'Studios'].indexOf(key) >= 0 ? '|' : ',')
-                    : value;
+                if (value !== undefined && value !== null && value !== false)
+                    parameters[key] = Array.isArray(value) ? value.join(pipeLists.indexOf(key) >= 0 ? '|' : ',') : value;
             }
+            if (filters.specialEpisode)
+                parameters.ParentIndexNumber = 0;
+            if (filters.alphabet === '#')
+                parameters.NameLessThan = 'A';
+            else if (filters.alphabet)
+                parameters.NameStartsWith = filters.alphabet;
             return list(host, '/Items', args, parameters);
         },
         items: (args, host) => list(host, '/Items', args, { Ids: (args.ids || []).join(',') }),

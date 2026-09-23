@@ -186,6 +186,16 @@ export function run() {
         }).then(() => a.clock({}, jf.host)).then(clock => {
             check(clock.received === Date.UTC(2026, 0, 1) && clock.sent === clock.received + 1, 'server clock');
         }).then(() => {
+            step = 'browse filters';
+            return a.browse({ parentId: 'movies', collectionType: 'movies', limit: 10, sortBy: 'DateCreated',
+                filters: { filters: ['IsUnplayed'], genres: ['Drama', 'Sci-Fi'], years: ['2020', '2021'], isHd: true,
+                    is3D: false, alphabet: '#' } }, jf.host);
+        }).then(() => {
+            const url = jf.calls[jf.calls.length - 1].url;
+            check(url.indexOf('filters=IsUnplayed') > 0 && url.indexOf('genres=Drama%7CSci-Fi') > 0
+                && url.indexOf('years=2020%2C2021') > 0 && url.indexOf('isHd=true') > 0, 'filters reach the server');
+            check(url.indexOf('is3D') < 0 && url.indexOf('NameLessThan=A') > 0 && url.indexOf('SortBy=DateCreated') > 0,
+                'unset filters stay off, # is before A');
             step = 'errors';
             return fails(() => a.libraries({}, { device: device, http: () => respond({}, 401) }), 'http_401');
         }).then(() => {
