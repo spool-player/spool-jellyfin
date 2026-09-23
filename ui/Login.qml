@@ -3,15 +3,14 @@ import QtQuick
 import QtQuick.Layouts
 import Spool
 
-// Signing in to a Jellyfin server: pick a server found on the network or type
-// its address, then sign in with a password or a Quick Connect code.
+// Signing in to a Jellyfin server: one found on the network or typed, then a
+// user and password or a Quick Connect code.
 FocusScope {
     id: root
 
     property var provider
     property string step: "server"
     property var servers: []
-    property bool searching: false
     property bool busy: false
     property string error: ""
     property var server: ({})
@@ -19,25 +18,16 @@ FocusScope {
     property string quickSecret: ""
 
     readonly property var messages: ({
-            "http_401": "That username and password didn't work",
-            "invalid_credentials": "That username and password didn't work",
-            "not_jellyfin": "That address isn't a Jellyfin server",
-            "origin_denied": "That doesn't look like a server address",
-            "network_error": "Couldn't reach that server",
-            "operation_timeout": "The server took too long to answer"
+            "http_401": "Wrong username or password",
+            "invalid_credentials": "Wrong username or password",
+            "not_jellyfin": "Not a Jellyfin server",
+            "origin_denied": "Not a server address",
+            "quick_connect_off": "Quick Connect is off on this server"
         })
 
     function fail(code) {
         busy = false
-        error = messages[code] || "Couldn't reach that server"
-    }
-
-    function discover() {
-        searching = true
-        provider.request("discover").then(result => {
-            searching = false
-            servers = result.servers || []
-        }, () => searching = false)
+        error = messages[code] || "Couldn't reach the server"
     }
 
     // Same rule as normalizeServer() in logic/provider.mjs, so the origin
@@ -93,7 +83,6 @@ FocusScope {
         return true
     }
 
-    // Select on a row or button does what a click would.
     function activate() {
         const item = Window.activeFocusItem
         if (item && typeof item.activate === "function")
@@ -105,9 +94,8 @@ FocusScope {
     }
 
     Component.onCompleted: {
-        messages["quick_connect_off"] = "Quick Connect is turned off on this server"
-        discover()
-        address.focusRow()
+        provider.request("discover").then(result => servers = result.servers || [], () => {})
+        Qt.callLater(address.focusRow)
     }
 
     Timer {
@@ -139,14 +127,13 @@ FocusScope {
             AppText {
                 Layout.fillWidth: true
                 Layout.bottomMargin: Metrics.scaled(8)
-                text: root.step === "server" ? "Choose your server" : root.step === "quick" ? "Quick Connect"
-                                                                                           : root.server.name || "Sign in"
+                visible: root.step === "account"
+                text: root.server.name || ""
                 font.pixelSize: Metrics.titleSizePx
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
 
-            // Server step
             Repeater {
                 model: root.step === "server" ? root.servers : []
                 delegate: ServerCard {
@@ -154,32 +141,16 @@ FocusScope {
                     Layout.fillWidth: true
                     title: modelData.name
                     serverAddress: modelData.address
-                    status: "Connect"
                     onAccepted: root.connect(modelData.address)
-                }
-            }
-
-            RowLayout {
-                visible: root.step === "server" && root.searching && root.servers.length === 0
-                spacing: Metrics.scaled(10)
-                BusySpinner {
-                    Layout.preferredWidth: Metrics.scaled(20)
-                    Layout.preferredHeight: Metrics.scaled(20)
-                    running: parent.visible
-                }
-                SecondaryText {
-                    text: "Looking on your network…"
-                    color: Theme.textMuted
                 }
             }
 
             TextFieldRow {
                 id: address
                 Layout.fillWidth: true
-                Layout.topMargin: Metrics.scaled(8)
                 visible: root.step === "server"
-                label: "Server address"
-                placeholderText: "192.168.1.20 or jellyfin.example.com"
+                label: "Server"
+                placeholderText: "192.168.1.20"
                 inputMethodHints: Qt.ImhUrlCharactersOnly | Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
                 onAccepted: root.connect(text)
             }
@@ -188,12 +159,11 @@ FocusScope {
                 Layout.alignment: Qt.AlignRight
                 visible: root.step === "server"
                 kind: "primary"
-                text: root.busy ? "Connecting…" : "Connect"
+                text: "Connect"
                 enabled: !root.busy && address.text.trim().length > 0
                 onClicked: root.connect(address.text)
             }
 
-            // Account step
             Flow {
                 id: users
                 Layout.fillWidth: true
@@ -249,13 +219,12 @@ FocusScope {
                 }
                 ActionButton {
                     kind: "primary"
-                    text: root.busy ? "Signing in…" : "Sign in"
+                    text: "Sign in"
                     enabled: !root.busy && usernameField.text.trim().length > 0
                     onClicked: root.signIn(usernameField.text, passwordField.text)
                 }
             }
 
-            // Quick Connect step
             AppText {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: Metrics.scaled(12)
@@ -269,10 +238,18 @@ FocusScope {
             SecondaryText {
                 Layout.fillWidth: true
                 visible: root.step === "quick"
-                text: "Enter this code under Quick Connect in Jellyfin on a signed-in device."
+                text: "Enter this code in Quick Connect on a signed-in device"
                 color: Theme.textMuted
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap
+            }
+
+            BusySpinner {
+                Layout.alignment: Qt.AlignHCenter
+                Layout.preferredWidth: Metrics.scaled(24)
+                Layout.preferredHeight: Metrics.scaled(24)
+                running: root.busy
+                visible: running
             }
 
             SecondaryText {
