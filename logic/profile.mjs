@@ -5,16 +5,17 @@
 const hlsPreference = ['hevc', 'h264', 'av1', 'vp9'];
 const subtitleFormats = ['srt', 'ass', 'ssa', 'vtt', 'pgssub', 'dvdsub'];
 
-export function maxBitrate(context) {
-    return context.maxBitrate || context.preferredMaxBitrate || 120000000;
+export function maxBitrate(context, inLocalNetwork) {
+    return context.maxBitrate || (context.unlimitedLocalNetwork && inLocalNetwork ? 1000000000 : 0)
+        || context.preferredMaxBitrate || context.measuredBitrate || 120000000;
 }
 
 export function maxHeight(context) {
     return context.maxHeight || context.preferredMaxHeight || 0;
 }
 
-export function deviceProfile(context) {
-    const bitrate = Math.min(Math.max(maxBitrate(context), 1000000), 1000000000);
+export function deviceProfile(context, inLocalNetwork) {
+    const bitrate = Math.min(Math.max(maxBitrate(context, inLocalNetwork), 1000000), 1000000000);
     const height = maxHeight(context);
     const codecs = (context.videoCodecs || []).map(c => String(c).trim().toLowerCase()).filter(Boolean);
     const restrict = Boolean(context.restrictVideoCodecs);

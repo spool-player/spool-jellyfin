@@ -8,7 +8,7 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | | |
 | --- | --- |
 | `manifest.json` | Identity, capabilities, screens and item actions (provider API 0.2) |
-| `logic/provider.mjs` | Sign-in, catalogue, playback, item actions, SyncPlay |
+| `logic/provider.mjs` | Sign-in, catalogue, playback, bandwidth endpoint, item actions, SyncPlay |
 | `logic/items.mjs` | Jellyfin JSON to Spool's item shape |
 | `logic/profile.mjs` | The DeviceProfile sent with every playback request |
 | `logic/events.mjs` | The server's websocket, as group, remote-control and change events |
@@ -17,6 +17,17 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 
 Several users and several servers can be signed in at once. Users of the same server are alternatives
 to each other in Spool; different servers are shown together.
+
+The `speedTest` capability lets Spool measure each account's route using Jellyfin's authenticated
+`/Playback/BitrateTest?size={bytes}&_={nonce}` endpoint. The provider preserves the server's reverse-proxy
+base path and sends the account token in the authorization header, not the URL. Spool's native host
+performs the streaming benchmark and chooses the bitrate and number of parallel requests.
+
+Playback uses the session's quality override first. Otherwise, “No limit on the local network” takes
+precedence when Jellyfin's `/System/Endpoint` reports `IsLocal` or `IsInNetwork`; its ceiling is 1 Gbit/s.
+Next come the manual settings preference, Spool's measured bitrate, and the existing 120 Mbit/s fallback.
+Local classification is requested only when the unlimited preference can apply; if it fails, playback
+keeps the manual, measured, or fallback ceiling rather than assuming the route is local.
 
 ## Development
 

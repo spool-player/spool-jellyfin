@@ -1,13 +1,13 @@
 {
   "api": "0.2",
   "upstream": "https://github.com/spool-player/spool",
-  "revision": "387ca15cef3549d6ccf3e142982e44ea0dad3bc8",
+  "revision": "3767b3222492e48cd6a9e0a2a9e5c5238c977406",
   "files": {
     "sdk/CMakeLists.txt": "14b20fd1a28ffe94a2ef0de54c8834d59b87f35d7eceacbd3252bc066ea4bea7",
     "sdk/LICENSE": "3f3d9e0024b1921b067d6f7f88deb4a60cbe7a78e76c64e3f1d7fc3b779b9d04",
     "sdk/provider-contract-runner.cpp": "2d08586e8797b689a4d36a8180db03132a9d13f2206cbdd8a6d8f0dcb1bded12",
-    "sdk/provider.d.ts": "f192d7259b36b86cae6d96f49978853c8894671e7403f8ab742b6c61226fa185",
-    "sdk/README.md": "8856e617164f6933c856d922d36d248242c062db5bd5d44412767db6aa3e6d53",
-    "sdk/spool-provider.py": "b8ea9c4514416686d1efe24318c4c319e970d66f1a779531a56c38914d19f874"
+    "sdk/provider.d.ts": "6b86edececfbb3b35a7c09596eb3301d049b28a0adf3ef68c7b0e90d7a6b8da2",
+    "sdk/README.md": "1d4dcaf2fc14e21e66572525a6baf0f373904bdb90c5caa70cb215f6c0c694ce",
+    "sdk/spool-provider.py": "1a8ffee2aeb61fedd371d979c5987969c2e6ebe129510af4f6d79df32815453c"
   }
 }

@@ -27,10 +27,16 @@ const never = () => new Promise(() => {});
 // A server keyed by "METHOD path", recording every request.
 function server(routes) {
     const calls = [];
+    const speedTests = [];
     return {
         calls: calls,
+        speedTests: speedTests,
         host: {
             device: device, delay: never,
+            speedTest: options => {
+                speedTests.push(options);
+                return Promise.resolve({ bitrate: 36000000, parallelRequests: 2 });
+            },
             http: (url, options) => {
                 const method = (options && options.method) || 'GET';
                 const path = url.replace(/^https?:\/\/[^/]+(\/jf)?/, '').split('?')[0];
@@ -108,6 +114,25 @@ export function run() {
             check(jf.calls[jf.calls.length - 1].url.indexOf('StartIndex=1') > 0, 'the cursor is the next offset');
             return fails(() => a.search({ query: 'x', cursor: '../1' }, jf.host), 'invalid_cursor');
         }).then(() => {
+            step = 'speed test endpoint';
+            const nested = createSource({ server: 'https://media.example/proxy/jellyfin///',
+                userId: 'ua', token: 'token-a' }, { device: device });
+            return Promise.all([a.speedTest({}, jf.host), b.speedTest({}, jf.host),
+                nested.speedTest({}, jf.host)]);
+        }).then(() => {
+            const first = jf.speedTests[0];
+            check(first.url.replace('{bytes}', '524288').replace('{nonce}', 'warmup-1')
+                === 'https://media.example/jf/Playback/BitrateTest?size=524288&_=warmup-1',
+                'the byte count and cache nonce reach the authenticated benchmark endpoint');
+            check(jf.speedTests[2].url
+                === 'https://media.example/proxy/jellyfin/Playback/BitrateTest?size={bytes}&_={nonce}',
+                'a nested reverse-proxy base path survives normalization');
+            check(first.headers.Authorization === jf.calls[0].options.headers.Authorization
+                && jf.speedTests[1].headers.Authorization === jf.calls[1].options.headers.Authorization,
+                'benchmarks use the same sanitized, per-account authorization as API requests');
+            check(jf.speedTests.every(call => call.url.indexOf('token-') < 0),
+                'benchmark URLs contain no account token');
+        }).then(() => {
             step = 'lists';
             return a.latest({ limit: 5 }, jf.host);
         }).then(page => {
@@ -146,6 +171,47 @@ export function run() {
                 jf.host), 'cross_origin_stream');
         }).then(() => fails(() => a.resolve({ itemId: 'film', variantId: 'missing', positionTicks: '0' }, jf.host),
             'selected_variant_unavailable'))
+        .then(() => {
+            step = 'bandwidth precedence';
+            const cases = [
+                { name: 'automatic uses the measured ceiling', context: { measuredBitrate: 36000000 }, expected: 36000000 },
+                { name: 'manual preference beats measurement',
+                    context: { preferredMaxBitrate: 20000000, measuredBitrate: 36000000 }, expected: 20000000 },
+                { name: 'session override beats manual and measured ceilings',
+                    context: { maxBitrate: 8000000, preferredMaxBitrate: 20000000, measuredBitrate: 36000000 },
+                    expected: 8000000 },
+                { name: 'local unlimited beats manual and measured ceilings',
+                    context: { unlimitedLocalNetwork: true, preferredMaxBitrate: 20000000, measuredBitrate: 36000000 },
+                    endpoint: { IsLocal: true }, expected: 1000000000 },
+                { name: 'server network classification also permits unlimited',
+                    context: { unlimitedLocalNetwork: true, measuredBitrate: 36000000 },
+                    endpoint: { IsLocal: false, IsInNetwork: true }, expected: 1000000000 },
+                { name: 'session override still beats local unlimited',
+                    context: { maxBitrate: 8000000, unlimitedLocalNetwork: true, preferredMaxBitrate: 20000000,
+                        measuredBitrate: 36000000 }, endpoint: { IsLocal: true }, expected: 8000000 },
+                { name: 'remote routes are not made unlimited',
+                    context: { unlimitedLocalNetwork: true, measuredBitrate: 36000000 },
+                    endpoint: { IsLocal: false, IsInNetwork: false }, expected: 36000000 },
+                { name: 'failed classification keeps the measured ceiling',
+                    context: { unlimitedLocalNetwork: true, measuredBitrate: 36000000 }, expected: 36000000 },
+                { name: 'unmeasured automatic retains the fallback', context: {}, expected: 120000000 }
+            ];
+            return cases.reduce((pending, example) => pending.then(() => {
+                step = 'bandwidth: ' + example.name;
+                const playback = server({
+                    'GET /System/Endpoint': example.endpoint,
+                    'POST /Items/film/PlaybackInfo': call => {
+                        const body = call.body;
+                        check(body.MaxStreamingBitrate === example.expected
+                            && body.DeviceProfile.MaxStreamingBitrate === example.expected
+                            && body.DeviceProfile.MaxStaticBitrate === example.expected,
+                            'playback negotiation and device profile agree on the effective ceiling');
+                        return respond({ MediaSources: [{ Id: 'theatrical', SupportsDirectPlay: true }] });
+                    }
+                });
+                return a.resolve(Object.assign({ itemId: 'film' }, example.context), playback.host);
+            }), Promise.resolve());
+        })
         .then(() => {
             step = 'report';
             return a.report({ event: 'start', itemId: 'film', variantId: 'theatrical', playSessionId: 'session',

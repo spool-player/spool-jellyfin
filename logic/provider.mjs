@@ -218,16 +218,26 @@ export function createSource(configuration, sourceHost) {
             genres: result.Genres || [], years: result.Years || [], officialRatings: result.OfficialRatings || [],
             tags: result.Tags || []
         })),
+        speedTest: (args, host) => host.speedTest({
+            url: server + '/Playback/BitrateTest?size={bytes}&_={nonce}',
+            headers: { Authorization: authorization() }
+        }),
 
         resolve: (args, host) => {
-            const playbackInfo = request(host, 'POST', '/Items/' + segment(args.itemId) + '/PlaybackInfo',
-                { UserId: userId }, {
+            // Only the server knows whether this connection is on its local network.
+            // An unavailable classification must not turn an unknown route into an unlimited one.
+            const localNetwork = args.unlimitedLocalNetwork && !args.maxBitrate
+                ? request(host, 'GET', '/System/Endpoint').then(
+                    endpoint => endpoint.IsLocal === true || endpoint.IsInNetwork === true, () => false)
+                : Promise.resolve(false);
+            const playbackInfo = localNetwork.then(local => request(host, 'POST',
+                '/Items/' + segment(args.itemId) + '/PlaybackInfo', { UserId: userId }, {
                     UserId: userId, MediaSourceId: args.variantId, StartTimeTicks: Number(args.positionTicks) || 0,
-                    MaxStreamingBitrate: maxBitrate(args), DeviceProfile: deviceProfile(args),
+                    MaxStreamingBitrate: maxBitrate(args, local), DeviceProfile: deviceProfile(args, local),
                     AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex,
                     EnableDirectPlay: !args.forceTranscode, EnableDirectStream: !args.forceTranscode,
                     EnableTranscoding: true, AutoOpenLiveStream: true, AllowVideoStreamCopy: true, AllowAudioStreamCopy: true
-                });
+                }));
             // Trickplay and skip markers come from other endpoints; ask at once.
             const details = request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: 'Trickplay' })
                 .then(raw => raw, () => null);

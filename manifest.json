@@ -3,14 +3,14 @@
   "api": "0.2",
   "id": "spool.jellyfin",
   "name": "Jellyfin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "Spool",
   "summary": "Your Jellyfin server",
   "homepage": "https://github.com/spool-player/spool-jellyfin",
   "icon": "assets/icon.svg",
   "entry": "logic/provider.mjs",
   "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
-    "groupPlayback", "remoteControl"],
+    "groupPlayback", "remoteControl", "speedTest"],
   "ui": {
     "login": "ui/Login.qml",
     "picker": "ui/Picker.qml"
