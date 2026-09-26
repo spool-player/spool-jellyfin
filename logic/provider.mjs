@@ -2,7 +2,7 @@
 // Jellyfin for Spool: one source per signed-in user.
 
 import { collectionTypes, detailFields, fields, item, page, segments, stream, time, trickplay } from './items.mjs';
-import { deviceProfile, maxBitrate } from './profile.mjs';
+import { canCopySource, deviceProfile, maxBitrate } from './profile.mjs';
 import { connect } from './events.mjs';
 
 const remoteCommands = ['MoveUp', 'MoveDown', 'MoveLeft', 'MoveRight', 'PageUp', 'PageDown', 'PreviousLetter',
@@ -236,13 +236,14 @@ export function createSource(configuration, sourceHost) {
                     MaxStreamingBitrate: maxBitrate(args, local), DeviceProfile: deviceProfile(args, local),
                     AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex,
                     EnableDirectPlay: !args.forceTranscode, EnableDirectStream: !args.forceTranscode,
-                    EnableTranscoding: true, AutoOpenLiveStream: true, AllowVideoStreamCopy: true, AllowAudioStreamCopy: true
+                    EnableTranscoding: true, AutoOpenLiveStream: true,
+                    AllowVideoStreamCopy: !args.forceTranscode, AllowAudioStreamCopy: true
                 }));
             // Trickplay and skip markers come from other endpoints; ask at once.
             const details = request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: 'Trickplay' })
                 .then(raw => raw, () => null);
             const markers = request(host, 'GET', '/MediaSegments/' + segment(args.itemId)).then(segments, () => []);
-            return Promise.all([playbackInfo, details, markers]).then(([info, raw, skip]) => {
+            return Promise.all([playbackInfo, details, markers, localNetwork]).then(([info, raw, skip, local]) => {
                 if (info.ErrorCode)
                     throw new Error('playback_unavailable');
                 const sources = info.MediaSources || [];
@@ -252,18 +253,24 @@ export function createSource(configuration, sourceHost) {
                     throw new Error('selected_variant_unavailable');
                 let url;
                 let playMethod;
-                const direct = !args.forceTranscode && (source.SupportsDirectPlay || (source.SupportsDirectStream && args.preferRemux));
-                if (direct || (!source.TranscodingUrl && source.SupportsDirectStream)) {
+                const copy = !args.forceTranscode && canCopySource(source, args, local);
+                const remux = copy && source.SupportsDirectStream
+                    && (args.preferRemux || !source.TranscodingUrl) && source.DirectStreamUrl;
+                const negotiated = remux || source.TranscodingUrl;
+                if (copy && source.SupportsDirectPlay) {
                     url = server + '/Videos/' + segment(args.itemId) + '/stream?' + query({ static: true,
                         MediaSourceId: source.Id, DeviceId: device.id, PlaySessionId: info.PlaySessionId });
-                    playMethod = source.SupportsDirectPlay ? 'DirectPlay' : 'DirectStream';
-                } else if (source.TranscodingUrl) {
+                    playMethod = 'DirectPlay';
+                } else if (negotiated) {
+                    const videoCopy = /[?&]VideoCodec=copy(?:&|$)/i.test(negotiated);
+                    if (!copy && videoCopy)
+                        throw new Error('selected_variant_unplayable');
                     // A credential for this server never goes to another host.
-                    if (/^https?:\/\//i.test(source.TranscodingUrl) && source.TranscodingUrl.indexOf(server + '/') !== 0)
+                    if (/^https?:\/\//i.test(negotiated) && negotiated.indexOf(server + '/') !== 0)
                         throw new Error('cross_origin_stream');
-                    url = /^https?:\/\//i.test(source.TranscodingUrl) ? source.TranscodingUrl
-                                                                      : server + '/' + source.TranscodingUrl.replace(/^\/+/, '');
-                    playMethod = 'Transcode';
+                    url = /^https?:\/\//i.test(negotiated) ? negotiated
+                                                         : server + '/' + negotiated.replace(/^\/+/, '');
+                    playMethod = remux || videoCopy ? 'DirectStream' : 'Transcode';
                 } else {
                     throw new Error('selected_variant_unplayable');
                 }

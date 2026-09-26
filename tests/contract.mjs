@@ -6,6 +6,7 @@
 
 import { createSource, normalizeServer } from '../logic/provider.mjs';
 import { translate, connect } from '../logic/events.mjs';
+import { deviceProfile } from '../logic/profile.mjs';
 
 let step = 'start';
 function check(value, message) {
@@ -60,6 +61,16 @@ export function run() {
     check(normalizeServer('jf.local') === 'http://jf.local:8096', 'a bare host gets the default port');
     check(normalizeServer('https://jf.example/base/') === 'https://jf.example/base', 'trailing slashes go');
     check(normalizeServer('http://jf.local:9000') === 'http://jf.local:9000', 'an explicit port stays');
+    step = 'quality profile';
+    const restricted = deviceProfile({ maxBitrate: 500000, maxHeight: 720,
+        preferredMaxHeight: 2160, restrictVideoCodecs: true, videoCodecs: ['mpeg2video'] }, false);
+    check(restricted.MaxStreamingBitrate === 500000 && restricted.MaxStaticBitrate === 500000,
+        'an explicit low bitrate ceiling is not raised');
+    check(restricted.TranscodingProfiles.length === 0,
+        'an output codec outside the device allowlist is never invented');
+    check(restricted.CodecProfiles[0].Conditions[0].Value === '720'
+        && restricted.CodecProfiles[0].Conditions[0].IsRequired,
+        'the player height override remains mandatory');
 
     const a = account('ua', 'token-a');
     const b = account('ub', 'token-b');
@@ -211,6 +222,30 @@ export function run() {
                 });
                 return a.resolve(Object.assign({ itemId: 'film' }, example.context), playback.host);
             }), Promise.resolve());
+        })
+        .then(() => {
+            step = 'quality cannot fall back to the original stream';
+            const playback = server({
+                'POST /Items/film/PlaybackInfo': { MediaSources: [
+                    { Id: 'theatrical', SupportsDirectStream: true }
+                ] }
+            });
+            return fails(() => a.resolve({ itemId: 'film', forceTranscode: true, maxBitrate: 1000000 },
+                playback.host), 'selected_variant_unplayable');
+        }).then(() => {
+            step = 'remux uses the negotiated stream, not the static original';
+            const playback = server({
+                'POST /Items/film/PlaybackInfo': { MediaSources: [
+                    { Id: 'theatrical', SupportsDirectStream: true,
+                        DirectStreamUrl: '/videos/film/stream.mkv?VideoCodec=copy&AudioCodec=aac',
+                        TranscodingUrl: '/videos/film/master.m3u8' }
+                ] }
+            });
+            return a.resolve({ itemId: 'film', preferRemux: true }, playback.host);
+        }).then(result => {
+            check(result.playMethod === 'DirectStream'
+                && result.url === 'https://media.example/jf/videos/film/stream.mkv?VideoCodec=copy&AudioCodec=aac',
+                'server-selected remux preserves its codec negotiation');
         })
         .then(() => {
             step = 'report';

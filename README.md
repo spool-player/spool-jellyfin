@@ -29,6 +29,11 @@ Next come the manual settings preference, Spool's measured bitrate, and the exis
 Local classification is requested only when the unlimited preference can apply; if it fails, playback
 keeps the manual, measured, or fallback ceiling rather than assuming the route is local.
 
+Height limits remain in force on local routes. A remux uses the server's
+negotiated URL, never an unbounded static-file fallback; forced transcoding
+disables video stream copy and fails if no transcoded stream is available.
+Codec restrictions never advertise an unsupported fallback output codec.
+
 ## Development
 
 The SDK under `sdk/` is pinned from Spool (`sdk.lock.json`; `tools/check-sdk.py` verifies it).

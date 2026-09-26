@@ -15,7 +15,7 @@ export function maxHeight(context) {
 }
 
 export function deviceProfile(context, inLocalNetwork) {
-    const bitrate = Math.min(Math.max(maxBitrate(context, inLocalNetwork), 1000000), 1000000000);
+    const bitrate = Math.min(maxBitrate(context, inLocalNetwork), 1000000000);
     const height = maxHeight(context);
     const codecs = (context.videoCodecs || []).map(c => String(c).trim().toLowerCase()).filter(Boolean);
     const restrict = Boolean(context.restrictVideoCodecs);
@@ -25,29 +25,36 @@ export function deviceProfile(context, inLocalNetwork) {
         directPlay.unshift({ Type: 'Video' });
     else if (codecs.length > 0)
         directPlay.unshift({ Type: 'Video', VideoCodec: codecs.join(',') });
-    let output = restrict ? hlsPreference.filter(c => codecs.indexOf(c) >= 0) : hlsPreference;
-    if (output.length === 0)
-        output = ['h264'];
+    const output = restrict ? hlsPreference.filter(c => codecs.indexOf(c) >= 0) : hlsPreference;
     return {
         Name: 'Spool',
         MaxStreamingBitrate: bitrate,
         MaxStaticBitrate: bitrate,
         MusicStreamingTranscodingBitrate: 1280000,
         DirectPlayProfiles: directPlay,
-        TranscodingProfiles: [{
+        TranscodingProfiles: output.length ? [{
             Type: 'Video', Container: 'mp4', Protocol: 'hls', Context: 'Streaming',
             AudioCodec: 'aac,ac3,eac3,mp3,flac,opus,dts,truehd', VideoCodec: output.join(','),
             MaxAudioChannels: '6', MinSegments: 2, BreakOnNonKeyFrames: false
-        }],
+        }] : [],
         ContainerProfiles: [],
-        // A source already under the ceiling direct plays rather than being
-        // transcoded up to it, so the height condition is not required.
+        // Missing dimensions must not silently defeat an explicit height ceiling.
         CodecProfiles: height > 0 ? [{ Type: 'Video', Conditions: [{
-            Condition: 'LessThanEqual', Property: 'Height', Value: String(height), IsRequired: false
+            Condition: 'LessThanEqual', Property: 'Height', Value: String(height), IsRequired: true
         }] }] : [],
         // Qt's engine has no Array.prototype.flatMap.
         SubtitleProfiles: [].concat(...subtitleFormats.map(f => [{ Format: f, Method: 'Embed' },
             { Format: f, Method: 'External' }])),
         ResponseProfiles: []
     };
+}
+
+export function canCopySource(source, context, inLocalNetwork) {
+    if (source.Bitrate > maxBitrate(context, inLocalNetwork))
+        return false;
+    const height = maxHeight(context);
+    const codecs = (context.videoCodecs || []).map(c => String(c).trim().toLowerCase());
+    return (source.MediaStreams || []).filter(s => s.Type === 'Video').every(video =>
+        (!height || (video.Height > 0 && video.Height <= height))
+        && (!context.restrictVideoCodecs || codecs.indexOf(String(video.Codec || '').toLowerCase()) >= 0));
 }
