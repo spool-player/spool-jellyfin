@@ -18,6 +18,10 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 Several users and several servers can be signed in at once. Users of the same server are alternatives
 to each other in Spool; different servers are shown together.
 
+Inherited thumbnails and backdrops preserve the parent image's item ID as well
+as its tag. This needs Spool's `thumbItemId`/`backdropItemId` artwork contract;
+home rails must not request a series or season image under an episode ID.
+
 The `speedTest` capability lets Spool measure each account's route using Jellyfin's authenticated
 `/Playback/BitrateTest?size={bytes}&_={nonce}` endpoint. The provider preserves the server's reverse-proxy
 base path and sends the account token in the authorization header, not the URL. Spool's native host
