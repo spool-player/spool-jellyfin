@@ -165,3 +165,7 @@ provider store to pick it up. Spool installs updates from there according to eac
 setting.
 
 MPL-2.0; see LICENSE and NOTICE.
+
+## Service icon
+
+The unmodified Jellyfin icon is by the Jellyfin Project, licensed CC BY-SA 4.0. See assets/JELLYFIN-LICENSE.txt and https://jellyfin.org/docs/general/contributing/branding/. The icon identifies the connected service; this is an independent Spool integration, not an official Jellyfin client. See [asset attribution](assets/BRANDING.md).

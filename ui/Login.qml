@@ -9,6 +9,20 @@ FocusScope {
     id: root
 
     property var provider
+    property bool validAddress: false
+    property int validationGeneration: 0
+    function validateAddress(input) {
+        const generation = ++validationGeneration
+        validAddress = false
+        if (!String(input).trim() || !provider || provider.closed)
+            return
+        provider.request("serverCandidates", {
+                             server: input
+                         }).then(result => {
+                             if (generation === validationGeneration)
+                                 validAddress = result.servers && result.servers.length > 0
+                         }, () => {})
+    }
     property string step: "server"
     property var servers: []
     property bool busy: false
@@ -45,41 +59,58 @@ FocusScope {
     }
 
     function searchLocalNetwork() {
-        if (!lanAvailable || lanSearching || busy || step !== "server")
+        if (lanSearching || busy || step !== "server")
             return
         const generation = ++lanGeneration
         lanSearching = true
-        lanStatus = "Waiting for local network permission"
+        lanStatus = "Searching local network…"
         error = ""
         let pages = 0
         const cursors = new Set()
         function next(cursor) {
             if (generation !== lanGeneration || provider.closed)
                 return Promise.resolve()
-            lanStatus = "Searching local network: " + pages + " pages checked"
-            return provider.request("discoverMore", cursor ? { "cursor": cursor } : {}).then(result => {
-                if (generation !== lanGeneration || provider.closed)
-                    return
-                ++pages
-                mergeServers(result.servers || [])
-                lanStatus = pages + " pages checked; " + servers.length + " servers found"
-                if (result.exhausted === true) {
-                    lanSearching = false
-                    return
-                }
-                if (typeof result.cursor !== "string" || !result.cursor || cursors.has(result.cursor) || pages >= 16)
-                    throw "invalid_pagination"
-                cursors.add(result.cursor)
-                return next(result.cursor)
-            })
+            lanStatus = "Searching local network…"
+            return provider.request("discoverMore", cursor ? {
+                                                                 "cursor": cursor
+                                                             } : {}).then(result => {
+                                                                 if (generation !== lanGeneration || provider.closed)
+                                                                     return
+                                                                 ++pages
+                                                                 mergeServers(result.servers || [])
+                                                                 lanStatus = servers.length + " servers found"
+                                                                 if (result.exhausted === true) {
+                                                                     lanSearching = false
+                                                                     return
+                                                                 }
+                                                                 if (typeof result.cursor !== "string" ||
+                                                                         !result.cursor || cursors.has(result.cursor)
+                                                                         || pages >= 512)
+                                                                     throw "invalid_pagination"
+                                                                 cursors.add(result.cursor)
+                                                                 return next(result.cursor)
+                                                             })
         }
-        provider.allowLanDiscovery().then(() => next(null)).catch(code => {
+        provider.request("discover").then(result => {
+            if (generation === lanGeneration && !provider.closed)
+                mergeServers(result.servers || [])
+        }, () => {}).then(() => {
+            if (generation !== lanGeneration || provider.closed)
+                return
+            if (!lanAvailable) {
+                lanSearching = false
+                lanStatus = servers.length + " servers found"
+                return
+            }
+            lanStatus = "Waiting for local network permission"
+            return provider.allowLanDiscovery().then(() => next(null))
+        }).catch(code => {
             if (generation !== lanGeneration || provider.closed)
                 return
             cancelLocalSearch()
             lanStatus = code === "cancelled" || code === "discovery_denied"
-                ? "Local search was not allowed. Use a discovered server or enter an address."
-                : "Local search failed. You can retry or enter a server address."
+                    ? "Local search was not allowed. Use a discovered server or enter an address." :
+                      "Local search failed. You can retry or enter a server address."
         })
     }
 
@@ -113,27 +144,31 @@ FocusScope {
             return provider.allowOrigin(candidate).then(() => {
                 if (generation !== connectionGeneration)
                     return null
-                return provider.request("probe", { "server": candidate }).then(result => result, code => {
-                    if (generation !== connectionGeneration)
-                        return null
-                    if (index + 1 < candidates.length)
-                        return attempt(candidates, index + 1)
-                    throw code
-                })
+                return provider.request("probe", {
+                                            "server": candidate
+                                        }).then(result => result, code => {
+                                            if (generation !== connectionGeneration)
+                                                return null
+                                            if (index + 1 < candidates.length)
+                                                return attempt(candidates, index + 1)
+                                            throw code
+                                        })
             })
         }
-        provider.request("serverCandidates", { "server": input })
-            .then(result => attempt(result.servers, 0)).then(result => {
-                if (generation !== connectionGeneration || !result)
-                    return
-                busy = false
-                server = result
-                step = "account"
-                Qt.callLater(() => (server.users || []).length > 0 ? InputKeys.focus(users) : usernameField.focusRow())
-            }, code => {
-                if (generation === connectionGeneration)
-                    fail(code)
-            })
+        provider.request("serverCandidates", {
+                             "server": input
+                         }).then(result => attempt(result.servers, 0)).then(result => {
+                             if (generation !== connectionGeneration || !result)
+                                 return
+                             busy = false
+                             server = result
+                             step = "account"
+                             Qt.callLater(() => (server.users || []).length > 0 ? InputKeys.focus(users) : usernameField.focusRow(
+                                                                                      ))
+                         }, code => {
+                             if (generation === connectionGeneration)
+                                 fail(code)
+                         })
     }
 
     function retryAvailability() {
@@ -142,15 +177,17 @@ FocusScope {
         const generation = connectionGeneration
         busy = true
         error = ""
-        provider.request("probe", { "server": server.server }).then(result => {
-            if (generation !== connectionGeneration)
-                return
-            busy = false
-            server = result
-        }, code => {
-            if (generation === connectionGeneration)
-                fail(code)
-        })
+        provider.request("probe", {
+                             "server": server.server
+                         }).then(result => {
+                             if (generation !== connectionGeneration)
+                                 return
+                             busy = false
+                             server = result
+                         }, code => {
+                             if (generation === connectionGeneration)
+                                 fail(code)
+                         })
     }
 
     function signIn(name, password) {
@@ -166,17 +203,25 @@ FocusScope {
     function startQuickConnect() {
         if (busy || server.quickConnectEnabled !== true)
             return
+        poll.stop()
+        quickCode = ""
         busy = true
         error = ""
+        const generation = connectionGeneration
         provider.request("quickConnectStart", {
                              "server": server.server
                          }).then(result => {
+                             if (generation !== connectionGeneration || provider.closed)
+                                 return
                              busy = false
                              quickCode = result.code
                              quickSecret = result.secret
-                             step = "quick"
+                             Qt.callLater(() => quickSection.visible && quickSection.forceActiveFocus())
                              poll.start()
-                         }, () => fail("quick_connect_off"))
+                         }, () => {
+                             if (generation === connectionGeneration && !provider.closed)
+                                 fail("quick_connect_off")
+                         })
     }
 
     function back() {
@@ -186,11 +231,13 @@ FocusScope {
         }
         if (step === "server")
             return false
-        poll.stop()
+        poll.stop();
         ++connectionGeneration
         busy = false
         error = ""
-        step = step === "quick" ? "account" : "server"
+        quickCode = ""
+        quickSecret = ""
+        step = "server"
         return true
     }
 
@@ -242,6 +289,12 @@ FocusScope {
                                            }, () => {})
     }
 
+    Timer {
+        id: addressValidation
+        interval: 150
+        onTriggered: root.validateAddress(address.text)
+    }
+
     Flickable {
         anchors.fill: parent
         contentHeight: column.implicitHeight + Metrics.pageMarginPx * 2
@@ -254,6 +307,12 @@ FocusScope {
             y: Metrics.pageMarginPx
             width: Math.min(root.width - Metrics.pageMarginPx * 2, Metrics.scaled(560))
             spacing: Metrics.scaled(12)
+
+            SecondaryText {
+                Layout.fillWidth: true
+                text: "Independent Spool integration for Jellyfin"
+                wrapMode: Text.Wrap
+            }
 
             CompatibilityNotice {
                 Layout.fillWidth: true
@@ -283,7 +342,7 @@ FocusScope {
 
             ActionButton {
                 Layout.alignment: Qt.AlignLeft
-                visible: root.step === "server" && root.lanAvailable
+                visible: root.step === "server"
                 enabled: !root.busy
                 text: root.lanSearching ? "Cancel local search" : "Search local network"
                 kind: "flat"
@@ -299,6 +358,10 @@ FocusScope {
 
             TextFieldRow {
                 id: address
+                onTextChanged: {
+                    root.validAddress = false
+                    addressValidation.restart()
+                }
                 Layout.fillWidth: true
                 visible: root.step === "server"
                 label: "Server"
@@ -312,7 +375,7 @@ FocusScope {
                 visible: root.step === "server"
                 kind: "primary"
                 text: "Connect"
-                enabled: !root.busy && address.text.trim().length > 0
+                enabled: !root.busy && root.validAddress
                 onClicked: root.connect(address.text)
             }
 
@@ -360,14 +423,6 @@ FocusScope {
                 Layout.fillWidth: true
                 visible: root.step === "account"
                 spacing: Metrics.scaled(10)
-                ActionButton {
-                    text: "Quick Connect"
-                    visible: root.server.quickConnectEnabled === true
-                    enabled: !root.busy
-                    kind: "flat"
-                    iconName: "devices"
-                    onClicked: root.startQuickConnect()
-                }
                 Item {
                     Layout.fillWidth: true
                 }
@@ -388,10 +443,22 @@ FocusScope {
                 onClicked: root.retryAvailability()
             }
 
+            ActionButton {
+                id: quickSection
+                Layout.alignment: Qt.AlignLeft
+                Layout.topMargin: Metrics.scaled(20)
+                visible: root.step === "account" && root.server.quickConnectEnabled === true
+                enabled: !root.busy
+                text: root.quickCode ? "Get a new Quick Connect code" : "Quick Connect"
+                kind: "secondary"
+                iconName: "devices"
+                onClicked: root.startQuickConnect()
+            }
+
             AppText {
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: Metrics.scaled(12)
-                visible: root.step === "quick"
+                visible: root.step === "account" && root.quickCode.length > 0
                 text: root.quickCode
                 font.pixelSize: Metrics.scaled(56)
                 font.weight: Font.DemiBold
@@ -400,7 +467,7 @@ FocusScope {
 
             SecondaryText {
                 Layout.fillWidth: true
-                visible: root.step === "quick"
+                visible: root.step === "account" && root.quickCode.length > 0
                 text: "Enter this code in Quick Connect on a signed-in device"
                 color: Theme.textMuted
                 horizontalAlignment: Text.AlignHCenter
