@@ -16,11 +16,78 @@ FocusScope {
     property var server: ({})
     property string quickCode: ""
     property string quickSecret: ""
+    property int connectionGeneration: 0
+    property bool lanAvailable: false
+    property bool lanSearching: false
+    property int lanGeneration: 0
+    property string lanStatus: ""
+
+    function mergeServers(found) {
+        const merged = servers.slice()
+        const ids = new Set(merged.map(entry => entry.id))
+        for (const entry of found) {
+            if (!ids.has(entry.id)) {
+                ids.add(entry.id)
+                merged.push(entry)
+            }
+        }
+        servers = merged
+    }
+
+    function cancelLocalSearch() {
+        if (!lanSearching)
+            return
+        ++lanGeneration
+        lanSearching = false
+        lanStatus = "Search cancelled"
+        if (provider && !provider.closed)
+            provider.cancelLanDiscovery()
+    }
+
+    function searchLocalNetwork() {
+        if (!lanAvailable || lanSearching || busy || step !== "server")
+            return
+        const generation = ++lanGeneration
+        lanSearching = true
+        lanStatus = "Waiting for local network permission"
+        error = ""
+        let pages = 0
+        const cursors = new Set()
+        function next(cursor) {
+            if (generation !== lanGeneration || provider.closed)
+                return Promise.resolve()
+            lanStatus = "Searching local network: " + pages + " pages checked"
+            return provider.request("discoverMore", cursor ? { "cursor": cursor } : {}).then(result => {
+                if (generation !== lanGeneration || provider.closed)
+                    return
+                ++pages
+                mergeServers(result.servers || [])
+                lanStatus = pages + " pages checked; " + servers.length + " servers found"
+                if (result.exhausted === true) {
+                    lanSearching = false
+                    return
+                }
+                if (typeof result.cursor !== "string" || !result.cursor || cursors.has(result.cursor) || pages >= 16)
+                    throw "invalid_pagination"
+                cursors.add(result.cursor)
+                return next(result.cursor)
+            })
+        }
+        provider.allowLanDiscovery().then(() => next(null)).catch(code => {
+            if (generation !== lanGeneration || provider.closed)
+                return
+            cancelLocalSearch()
+            lanStatus = code === "cancelled" || code === "discovery_denied"
+                ? "Local search was not allowed. Use a discovered server or enter an address."
+                : "Local search failed. You can retry or enter a server address."
+        })
+    }
 
     readonly property var messages: ({
                                          "http_401": "Wrong username or password",
                                          "invalid_credentials": "Wrong username or password",
                                          "not_jellyfin": "Not a Jellyfin server",
+                                         "invalid_server": "Not a server address",
                                          "origin_denied": "Not a server address",
                                          "quick_connect_off": "Quick Connect is off on this server"
                                      })
@@ -30,33 +97,60 @@ FocusScope {
         error = messages[code] || "Couldn't reach the server"
     }
 
-    // Same rule as normalizeServer() in logic/provider.mjs, so the origin
-    // allowed here is the one requests go to.
-    function normalized(input) {
-        let text = String(input || "").trim().replace(/\/+$/, "")
-        if (!/^https?:\/\//i.test(text))
-            text = "http://" + text
-        if (/^http:\/\/[^/:]+$/i.test(text))
-            text += ":8096"
-        return text
-    }
-
     function connect(input) {
-        if (String(input).trim().length === 0)
+        if (String(input).trim().length === 0 || busy)
             return
-        const address = normalized(input)
+        cancelLocalSearch()
+        const generation = ++connectionGeneration
         busy = true
         error = ""
-        provider.allowOrigin(address).then(() => provider.request("probe", {
-                                                                      "server": address
-                                                                  })).then(result => {
-                                                                      busy = false
-                                                                      server = result
-                                                                      step = "account"
-                                                                      Qt.callLater(() => (server.users || []).length
-                                                                              > 0 ? InputKeys.focus(users) :
-                                                                                    usernameField.focusRow())
-                                                                  }, fail)
+        // Validate in provider JS once. Grant each exact candidate only as it is
+        // tried; explicit HTTPS addresses never produce an HTTP candidate.
+        function attempt(candidates, index) {
+            if (generation !== connectionGeneration)
+                return Promise.resolve(null)
+            const candidate = candidates[index]
+            return provider.allowOrigin(candidate).then(() => {
+                if (generation !== connectionGeneration)
+                    return null
+                return provider.request("probe", { "server": candidate }).then(result => result, code => {
+                    if (generation !== connectionGeneration)
+                        return null
+                    if (index + 1 < candidates.length)
+                        return attempt(candidates, index + 1)
+                    throw code
+                })
+            })
+        }
+        provider.request("serverCandidates", { "server": input })
+            .then(result => attempt(result.servers, 0)).then(result => {
+                if (generation !== connectionGeneration || !result)
+                    return
+                busy = false
+                server = result
+                step = "account"
+                Qt.callLater(() => (server.users || []).length > 0 ? InputKeys.focus(users) : usernameField.focusRow())
+            }, code => {
+                if (generation === connectionGeneration)
+                    fail(code)
+            })
+    }
+
+    function retryAvailability() {
+        if (busy)
+            return
+        const generation = connectionGeneration
+        busy = true
+        error = ""
+        provider.request("probe", { "server": server.server }).then(result => {
+            if (generation !== connectionGeneration)
+                return
+            busy = false
+            server = result
+        }, code => {
+            if (generation === connectionGeneration)
+                fail(code)
+        })
     }
 
     function signIn(name, password) {
@@ -70,6 +164,8 @@ FocusScope {
     }
 
     function startQuickConnect() {
+        if (busy || server.quickConnectEnabled !== true)
+            return
         busy = true
         error = ""
         provider.request("quickConnectStart", {
@@ -84,9 +180,15 @@ FocusScope {
     }
 
     function back() {
+        if (lanSearching) {
+            cancelLocalSearch()
+            return true
+        }
         if (step === "server")
             return false
         poll.stop()
+        ++connectionGeneration
+        busy = false
         error = ""
         step = step === "quick" ? "account" : "server"
         return true
@@ -103,8 +205,26 @@ FocusScope {
     }
 
     Component.onCompleted: {
-        provider.request("discover").then(result => servers = result.servers || [], () => {})
+        provider.request("discover").then(result => {
+            if (!provider.closed)
+                mergeServers(result.servers || [])
+        }, () => {})
+        provider.request("extensionStatus").then(result => {
+            lanAvailable = !provider.closed && result.enabled && result.enabled["spool.lan-probe"] === 1
+        }, () => {})
         Qt.callLater(address.focusRow)
+    }
+
+    Component.onDestruction: cancelLocalSearch()
+
+    Connections {
+        target: root.provider
+        function onClosedChanged() {
+            if (root.provider.closed) {
+                root.cancelLocalSearch()
+                root.lanAvailable = false
+            }
+        }
     }
 
     Timer {
@@ -135,6 +255,11 @@ FocusScope {
             width: Math.min(root.width - Metrics.pageMarginPx * 2, Metrics.scaled(560))
             spacing: Metrics.scaled(12)
 
+            CompatibilityNotice {
+                Layout.fillWidth: true
+                provider: root.provider
+            }
+
             AppText {
                 Layout.fillWidth: true
                 Layout.bottomMargin: Metrics.scaled(8)
@@ -154,6 +279,22 @@ FocusScope {
                     serverAddress: modelData.address
                     onAccepted: root.connect(modelData.address)
                 }
+            }
+
+            ActionButton {
+                Layout.alignment: Qt.AlignLeft
+                visible: root.step === "server" && root.lanAvailable
+                enabled: !root.busy
+                text: root.lanSearching ? "Cancel local search" : "Search local network"
+                kind: "flat"
+                onClicked: root.lanSearching ? root.cancelLocalSearch() : root.searchLocalNetwork()
+            }
+
+            SecondaryText {
+                Layout.fillWidth: true
+                visible: root.step === "server" && root.lanStatus.length > 0
+                text: root.lanStatus
+                wrapMode: Text.Wrap
             }
 
             TextFieldRow {
@@ -221,6 +362,8 @@ FocusScope {
                 spacing: Metrics.scaled(10)
                 ActionButton {
                     text: "Quick Connect"
+                    visible: root.server.quickConnectEnabled === true
+                    enabled: !root.busy
                     kind: "flat"
                     iconName: "devices"
                     onClicked: root.startQuickConnect()
@@ -234,6 +377,15 @@ FocusScope {
                     enabled: !root.busy && usernameField.text.trim().length > 0
                     onClicked: root.signIn(usernameField.text, passwordField.text)
                 }
+            }
+
+            ActionButton {
+                Layout.alignment: Qt.AlignLeft
+                visible: root.step === "account" && root.server.quickConnectAvailable === false
+                enabled: !root.busy
+                text: "Retry Quick Connect availability"
+                kind: "flat"
+                onClicked: root.retryAvailability()
             }
 
             AppText {

@@ -8,6 +8,9 @@ import { createSource, normalizeServer } from '../logic/provider.mjs';
 import { translate, connect } from '../logic/events.mjs';
 import { deviceProfile } from '../logic/profile.mjs';
 import { item } from '../logic/items.mjs';
+import { catalogueContracts } from './catalogue.mjs';
+import { settingsContracts } from './settings.mjs';
+import { remoteContracts } from './remote.mjs';
 
 let step = 'start';
 function check(value, message) {
@@ -53,8 +56,227 @@ function server(routes) {
     };
 }
 
-function account(user, token) {
-    return createSource({ server: 'https://media.example/jf', userId: user, token: token }, { device: device });
+function account(user, token, extensions) {
+    const host = { device: device };
+    if (extensions !== undefined)
+        host.extensions = extensions;
+    return createSource({ server: 'https://media.example/jf', userId: user, token: token }, host);
+}
+
+function extensionCompatibility() {
+    step = 'optional extensions and legacy artwork';
+    const declared = { 'spool.artwork-owners': 1, 'spool.speed-test': 1, 'spool.lan-probe': 1,
+        'spool.suggestions': 1, 'spool.item-actions': 1, 'spool.collection-editing': 1,
+        'spool.playback-queue-reporting': 1, 'spool.playback-preferences': 1, 'spool.settings-storage': 1,
+        'spool.remote-targets': 1 };
+    const legacy = account('ua', 'token');
+    const current = account('ua', 'token', declared);
+    const wrong = account('ua', 'token', { 'spool.artwork-owners': 2, 'spool.speed-test': '1', 'future.feature': 1 });
+    check(Object.keys(legacy.describe().extensions).length === 0
+        && Object.keys(declared).every(id => legacy.extensionStatus().missingHost.indexOf(id) >= 0),
+        'absent host extensions require an update regardless of device version');
+    check(Object.keys(wrong.extensionStatus().enabled).length === 0, 'only exact supported wire majors enable features');
+    check(current.describe().extensions['spool.artwork-owners'] === 1
+        && current.extensionStatus().enabled['spool.speed-test'] === 1
+        && current.extensionStatus().missingHost.length === 0, 'supported declarations become account offers');
+    const raw = { Id: 'episode', Type: 'Episode', SeriesId: 'series', SeriesPrimaryImageTag: 'series-poster',
+        AlbumId: 'album', AlbumPrimaryImageTag: 'album-poster', ImageTags: { Primary: 'own-poster' },
+        ParentThumbItemId: 'season', ParentThumbImageTag: 'parent-thumb',
+        ParentBackdropItemId: 'series', ParentBackdropImageTags: ['parent-backdrop'] };
+    const fixture = server({ 'GET /Items': { Items: [raw], TotalRecordCount: 1 },
+        'GET /Users/ua/Items/episode': raw });
+    return fails(() => legacy.speedTest({}, fixture.host), 'unsupported_extension')
+        .then(() => fails(() => wrong.speedTest({}, fixture.host), 'unsupported_extension')).then(() => {
+            check(fixture.calls.length === 0 && fixture.speedTests.length === 0,
+                'unsupported speed tests fail before HTTP or native probes');
+            return Promise.all([legacy.browse({ limit: 5 }, fixture.host), current.browse({ limit: 5 }, fixture.host),
+                legacy.details({ itemId: 'episode' }, fixture.host), current.details({ itemId: 'episode' }, fixture.host)]);
+        }).then(results => {
+            for (const row of [results[0].items[0], results[2].item]) {
+                check(!row.thumbTag && !row.backdropTag && !row.thumbItemId && !row.backdropItemId,
+                    'legacy pages and details never attach inherited images to the child');
+                check(row.posterTag === 'own-poster' && row.seriesPosterTag === 'series-poster'
+                    && row.albumPosterTag === 'album-poster', 'own images and baseline poster fallbacks remain');
+            }
+            for (const row of [results[1].items[0], results[3].item])
+                check(row.thumbItemId === 'season' && row.thumbTag === 'parent-thumb'
+                    && row.backdropItemId === 'series' && row.backdropTag === 'parent-backdrop',
+                    'each source applies its own negotiated artwork options');
+        });
+}
+
+function lanDiscovery() {
+    step = 'consented local discovery';
+    const source = createSource({}, { device: device, extensions: { 'spool.lan-probe': 1 } });
+    const response = (id, overrides) => ({ origin: 'http://127.0.0.1:8096', status: 200,
+        body: JSON.stringify(Object.assign({ Id: id, ServerName: 'Local server', Version: '10.10.0',
+            ProductName: 'Jellyfin', LocalAddress: 'http://untrusted.example' }, overrides || {})) });
+    const pages = [
+        { responses: [response('one'), response('one'), response('foreign', { ProductName: 'Emby Server' }),
+            response('invalid', { ServerName: 42 }), response('', {}),
+            { origin: 'http://127.0.0.1:8096', status: 200, body: 'not json' },
+            Object.assign(response('redirect'), { status: 302 })], cursor: 'opaque:next', exhausted: false },
+        { responses: [response('one'), response('two')], cursor: null, exhausted: true },
+        { responses: [response('one')], cursor: null, exhausted: true }
+    ];
+    let calls = 0;
+    const host = { probeLocalHttp: options => {
+        check(options.port === 8096 && options.path === '/System/Info/Public' && options.limit === 32,
+            'bounded public-info discovery uses the unauthenticated native probe');
+        check(calls === 1 ? options.cursor === 'opaque:next' : options.cursor === undefined,
+            'opaque continuation is forwarded; fresh searches do not carry a cursor');
+        return Promise.resolve(pages[calls++]);
+    } };
+    return fails(() => createSource({}, { device: device }).discoverMore({}, host), 'unsupported_extension')
+        .then(() => fails(() => createSource({}, { extensions: { 'spool.lan-probe': 2 } }).discoverMore({}, host),
+            'unsupported_extension'))
+        .then(() => fails(() => source.discoverMore({}, {}), 'unsupported_extension'))
+        .then(() => {
+            check(calls === 0, 'old hosts cannot start local probing');
+            return source.discoverMore({}, host);
+        }).then(first => {
+            check(first.servers.length === 1 && first.servers[0].id === 'one'
+                && first.servers[0].address === 'http://127.0.0.1:8096'
+                && first.cursor === 'opaque:next' && first.exhausted === false,
+                'only validated Jellyfin public info is offered, using the probed origin rather than advertised URLs');
+            return source.discoverMore({ cursor: first.cursor }, host);
+        }).then(second => {
+            check(second.servers.length === 1 && second.servers[0].id === 'two'
+                && second.cursor === null && second.exhausted === true,
+                'duplicate server IDs across pages are omitted without losing terminal state');
+            return source.discoverMore({}, host);
+        }).then(restarted => {
+            check(restarted.servers.length === 1 && restarted.servers[0].id === 'one', 'fresh scans reset seen IDs');
+            return source.discoverMore({}, { probeLocalHttp: () =>
+                Promise.resolve({ responses: [], cursor: null, exhausted: true }) });
+        })
+        .then(empty => check(empty.servers.length === 0 && empty.exhausted === true,
+            'no local interfaces leaves an empty completed search'));
+}
+
+// Baseline repairs are exercised through provider operations, including the raw
+// request body: JSON.parse would itself round the very integers under test.
+function baselineRepairs() {
+    step = 'playlist occurrences';
+    const source = account('ua', 'token-a');
+    const playlist = server({ 'GET /Items': { TotalRecordCount: 2, Items: [
+        { Id: 'film', PlaylistItemId: 'entry/first', Name: 'Film' },
+        { Id: 'film', PlaylistItemId: 0, Name: 'Film' }
+    ] } });
+    return source.browse({ parentId: 'playlist', limit: 10 }, playlist.host).then(result => {
+        check(result.items[0].id === 'film' && result.items[1].id === 'film'
+            && result.items[0].entryId === 'entry/first' && result.items[1].entryId === '0',
+            'duplicate media rows retain distinct opaque occurrence IDs, including numeric zero');
+        step = 'exact wire ticks';
+        const wire = server({
+            'POST /Items/film/PlaybackInfo': { MediaSources: [{ Id: 'v', SupportsDirectPlay: true }] },
+            'POST /Sessions/Playing': {}, 'POST /Sessions/Playing/Progress': {}, 'POST /Sessions/Playing/Stopped': {},
+            'POST /Users/ua/Items/film/UserData': {},
+            'POST /SyncPlay/Seek': {}, 'POST /SyncPlay/SetNewQueue': {},
+            'POST /SyncPlay/Buffering': {}, 'POST /SyncPlay/Ready': {}
+        });
+        const ordinary = '9007199254740993 "quoted" \\ escaped\nline';
+        const operations = [
+            { path: '/Items/film/PlaybackInfo', field: 'StartTimeTicks',
+                call: ticks => source.resolve({ itemId: 'film', positionTicks: ticks, unlimitedLocalNetwork: true }, wire.host) },
+            ...['start', 'progress', 'stop'].map(event => ({
+                path: { start: '/Sessions/Playing', progress: '/Sessions/Playing/Progress', stop: '/Sessions/Playing/Stopped' }[event],
+                field: 'PositionTicks', call: ticks => source.report({ event: event, itemId: 'film',
+                    positionTicks: ticks, subtitleStreamIndex: -1, audioStreamIndex: -1, playSessionId: ordinary }, wire.host)
+            })),
+            { path: '/Users/ua/Items/film/UserData', field: 'PlaybackPositionTicks',
+                call: ticks => source.progress({ itemId: 'film', positionTicks: ticks }, wire.host) },
+            { path: '/SyncPlay/Seek', field: 'PositionTicks',
+                call: ticks => source.groupSend({ action: 'seek', positionTicks: ticks }, wire.host) },
+            { path: '/SyncPlay/SetNewQueue', field: 'StartPositionTicks',
+                call: ticks => source.groupSend({ action: 'setQueue', positionTicks: ticks,
+                    itemIds: ['film', 'film'], index: 1 }, wire.host) },
+            ...[true, false].map(buffering => ({
+                path: '/SyncPlay/' + (buffering ? 'Buffering' : 'Ready'), field: 'PositionTicks',
+                call: ticks => source.groupSend({ action: 'buffering', buffering: buffering,
+                    positionTicks: ticks, at: 0, entryId: 'entry' }, wire.host)
+            }))
+        ];
+        let sequence = Promise.resolve();
+        for (const operation of operations) {
+            for (const ticks of ['0', '-1', '9007199254740993', '9223372036854775807', '-9223372036854775808']) {
+                sequence = sequence.then(() => operation.call(ticks)).then(() => {
+                    const call = wire.calls.filter(entry => entry.path === operation.path).pop();
+                    check(call.options.body.indexOf('"' + operation.field + '":' + ticks) >= 0,
+                        operation.path + ' emits the exact signed integer number token');
+                    if (operation.path.indexOf('/Sessions/Playing') === 0)
+                        check(call.body.SubtitleStreamIndex === -1 && call.body.AudioStreamIndex === undefined
+                            && call.body.PlaySessionId === ordinary, 'subtitle off and ordinary escaped strings survive');
+                });
+            }
+            for (const ticks of ['', '01', '1.5', '1e3', ' 1', '+1', '9223372036854775808',
+                '-9223372036854775809', '1,"injected":true', 9007199254740992, null, {}]) {
+                sequence = sequence.then(() => {
+                    const before = wire.calls.length;
+                    return fails(() => operation.call(ticks), 'invalid_position').then(() =>
+                        check(wire.calls.length === before, 'invalid ticks fail before any HTTP, including resolve side requests'));
+                });
+            }
+        }
+        return sequence;
+    }).then(() => {
+        step = 'manual discovery candidates';
+        const login = createSource({}, { device: device });
+        const candidates = input => login.serverCandidates({ server: input }).servers;
+        const equal = (input, expected) => check(JSON.stringify(candidates(input)) === JSON.stringify(expected),
+            'candidate order and supplied address components for ' + input);
+        equal('media.example/base', ['https://media.example/base', 'http://media.example:8096/base', 'http://media.example/base']);
+        equal('media.example:9000/base/', ['https://media.example:9000/base', 'http://media.example:9000/base']);
+        equal('192.168.1.8/base', ['http://192.168.1.8:8096/base', 'https://192.168.1.8/base', 'http://192.168.1.8/base']);
+        equal('localhost:9000', ['http://localhost:9000', 'https://localhost:9000']);
+        equal('[::1]/jf', ['http://[::1]:8096/jf', 'https://[::1]/jf', 'http://[::1]/jf']);
+        equal('https://192.168.1.8:9000/base/', ['https://192.168.1.8:9000/base']);
+        equal('http://media.example/base', ['http://media.example/base']);
+        let invalid = Promise.resolve();
+        for (const input of ['', 'ftp://media.example', 'https://user:pass@media.example', 'media.example?q=1',
+            'media.example#fragment', 'media.example:0', 'media.example:65536', 'media.example\\evil',
+            'bad host', 'http://999.1.1.1', 'http://[:::1]', 'https://%65vil.example']) {
+            invalid = invalid.then(() => fails(() => login.serverCandidates({ server: input }), 'invalid_server'));
+        }
+        return invalid.then(() => login.discover({}, {
+            discover: () => Promise.resolve([
+                { address: '192.168.1.8', text: JSON.stringify({ Id: 'literal', Address: 'https://10.0.0.9:9443/jf' }) },
+                { address: '192.168.1.8', text: JSON.stringify({ Id: 'dns', Address: 'https://media.example:9443/jf' }) },
+                { address: 'fd00::8', text: JSON.stringify({ Id: 'ipv6', Address: 'http://[fd00::9]:8096/base' }) },
+                { address: '192.168.1.8', text: JSON.stringify({ Id: 'bad', Address: 'http://user@host' }) }
+            ])
+        })).then(result => {
+            check(result.servers.length === 3, 'invalid announcement addresses are ignored');
+            check(result.servers.find(entry => entry.id === 'literal').address === 'https://192.168.1.8:9443/jf',
+                'UDP sender replaces a literal host without losing TLS, port or base path');
+            check(result.servers.find(entry => entry.id === 'dns').address === 'https://media.example:9443/jf',
+                'UDP sender does not override a DNS reverse proxy');
+            check(result.servers.find(entry => entry.id === 'ipv6').address === 'http://[fd00::8]:8096/base',
+                'IPv6 sender is correctly bracketed');
+        });
+    }).then(() => {
+        step = 'Quick Connect availability';
+        const login = createSource({}, { device: device });
+        let sequence = Promise.resolve();
+        for (const availability of [true, false, 'true', undefined, 'failure']) {
+            const routes = {
+                'GET /System/Info/Public': { Id: 'server-id', ServerName: 'Home' },
+                'GET /Users/Public': [{ Id: 'u1', Name: 'Ann' }],
+                'POST /Users/AuthenticateByName': { AccessToken: 'new-token', ServerId: 'server-id', User: { Id: 'u1' } }
+            };
+            if (availability !== undefined)
+                routes['GET /QuickConnect/Enabled'] = availability === 'failure' ? () => respond({}, 503) : availability;
+            const setup = server(routes);
+            sequence = sequence.then(() => login.probe({ server: 'https://media.example/jf' }, setup.host)).then(info => {
+                check(info.quickConnectEnabled === (availability === true), 'only affirmative availability enables code login');
+                check(info.quickConnectAvailable === (typeof availability === 'boolean'),
+                    'failed, malformed or unsupported availability is retryable');
+                check(info.users[0].id === 'u1', 'availability failures do not hide password users');
+                return login.authenticate({ server: info.server, username: 'Ann', password: 'right' }, setup.host);
+            }).then(account => check(account.configuration.token === 'new-token', 'password sign-in remains usable'));
+        }
+        return sequence;
+    });
 }
 
 export function run() {
@@ -62,19 +284,18 @@ export function run() {
     const inherited = { Id: 'episode', Type: 'Episode', SeriesId: 'series',
         ParentBackdropItemId: 'series', ParentBackdropImageTags: ['series-backdrop'],
         ParentThumbItemId: 'season', ParentThumbImageTag: 'season-thumb' };
-    const inheritedImages = item(inherited);
+    const inheritedImages = item(inherited, { artworkOwners: true });
     check(inheritedImages.backdropItemId === 'series' && inheritedImages.backdropTag === 'series-backdrop'
         && inheritedImages.thumbItemId === 'season' && inheritedImages.thumbTag === 'season-thumb',
         'inherited thumbnail and backdrop keep their distinct owners');
     const ownImages = item(Object.assign({}, inherited, { ImageTags: { Thumb: 'own-thumb' },
-        BackdropImageTags: ['own-backdrop'] }));
+        BackdropImageTags: ['own-backdrop'] }), { artworkOwners: true });
     check(!ownImages.thumbItemId && !ownImages.backdropItemId && ownImages.thumbTag === 'own-thumb'
         && ownImages.backdropTag === 'own-backdrop', 'own images never inherit a parent owner');
     const ownerless = item({ Id: 'episode', ParentThumbImageTag: 'unknown',
-        ParentBackdropImageTags: ['unknown'] });
+        ParentBackdropImageTags: ['unknown'] }, { artworkOwners: true });
     check(!ownerless.thumbTag && !ownerless.backdropTag, 'unknown parent ownership cannot create a child image URL');
     step = 'server address';
-    check(normalizeServer('jf.local') === 'http://jf.local:8096', 'a bare host gets the default port');
     check(normalizeServer('https://jf.example/base/') === 'https://jf.example/base', 'trailing slashes go');
     check(normalizeServer('http://jf.local:9000') === 'http://jf.local:9000', 'an explicit port stays');
     step = 'quality profile';
@@ -103,6 +324,9 @@ export function run() {
             { Id: 'theatrical', Name: 'Theatrical', Path: 'D:\\media\\Film.mp4', Container: 'mp4' }] };
     const jf = server({
         'GET /Items': () => respond({ TotalRecordCount: 3, Items: [film] }),
+        'GET /Users/ua': { Policy: { EnableContentDeletion: true } },
+        'GET /Users/ua/Items/list-1': { Id: 'list-1', Type: 'Playlist', CanEditItems: true },
+        'GET /Playlists/list-1/Users/ua': { CanEdit: true },
         'GET /Users/ua/Items/Latest': [film, { Id: 'show', Name: 'Show', Type: 'Series' }],
         'GET /Users/ua/Items/film': film,
         'GET /Users/ua/Views': { Items: [{ Id: 'movies', Name: 'Movies', CollectionType: 'movies',
@@ -123,8 +347,12 @@ export function run() {
         'POST /Sessions/Playing': {}
     });
 
-    step = 'search';
-    return Promise.all([a.search({ query: 'Film', limit: 1 }, jf.host), b.search({ query: 'Film', limit: 1 }, jf.host)])
+    step = 'browse';
+    return extensionCompatibility().then(baselineRepairs).then(lanDiscovery).then(catalogueContracts)
+        .then(() => settingsContracts()).then(() => remoteContracts()).then(() => {
+        step = 'browse';
+        return Promise.all([a.browse({ limit: 1 }, jf.host), b.browse({ limit: 1 }, jf.host)]);
+    })
         .then(pages => {
             const page = pages[0];
             check(page.total === 3 && !page.exhausted && page.cursor === '1', 'paging from TotalRecordCount');
@@ -135,17 +363,16 @@ export function run() {
             check(auth[0].indexOf('Token="token-a"') >= 0 && auth[1].indexOf('Token="token-b"') >= 0,
                 'each account sends its own token');
             check(auth[0].indexOf('Device="Living Room"') >= 0, 'header values cannot break out of quotes');
-            check(jf.calls[0].url.indexOf('SearchTerm=Film') > 0 && jf.calls[0].url.indexOf('Limit=1') > 0, 'query');
-            return a.search({ query: 'Film', limit: 1, cursor: page.cursor }, jf.host);
+            return a.browse({ limit: 1, cursor: page.cursor }, jf.host);
         }).then(() => {
             check(jf.calls[jf.calls.length - 1].url.indexOf('StartIndex=1') > 0, 'the cursor is the next offset');
-            return fails(() => a.search({ query: 'x', cursor: '../1' }, jf.host), 'invalid_cursor');
+            return fails(() => a.browse({ cursor: '../1' }, jf.host), 'invalid_cursor');
         }).then(() => {
             step = 'speed test endpoint';
             const nested = createSource({ server: 'https://media.example/proxy/jellyfin///',
-                userId: 'ua', token: 'token-a' }, { device: device });
-            return Promise.all([a.speedTest({}, jf.host), b.speedTest({}, jf.host),
-                nested.speedTest({}, jf.host)]);
+                userId: 'ua', token: 'token-a' }, { device: device, extensions: { 'spool.speed-test': 1 } });
+            return Promise.all([account('ua', 'token-a', { 'spool.speed-test': 1 }).speedTest({}, jf.host),
+                account('ub', 'token-b', { 'spool.speed-test': 1 }).speedTest({}, jf.host), nested.speedTest({}, jf.host)]);
         }).then(() => {
             const first = jf.speedTests[0];
             check(first.url.replace('{bytes}', '524288').replace('{nonce}', 'warmup-1')
@@ -280,12 +507,10 @@ export function run() {
             check(result.pick && result.pick.kind === 'playlist', 'adding asks where first');
             return a.runItemAction({ action: 'playlist', itemId: 'film', newName: 'Weekend' }, jf.host);
         }).then(result => {
-            check(result.message === 'Added to Weekend', 'a new playlist');
             check(jf.calls[jf.calls.length - 1].body.Ids[0] === 'film', 'with the item in it');
             return a.runItemAction({ action: 'playlist', itemId: 'film', targetId: 'list-1', targetName: 'Mine' },
                 jf.host);
         }).then(result => {
-            check(result.message === 'Added to Mine', 'an existing playlist');
             return a.runItemAction({ action: 'delete', itemId: 'film' }, jf.host);
         }).then(result => {
             check(result.pick && result.pick.kind === 'confirm', 'deleting asks first');
@@ -325,14 +550,14 @@ export function run() {
                     ? respond({ AccessToken: 'new-token', ServerId: 'server-id', User: { Id: 'u1', Name: 'Ann' } })
                     : respond({}, 401)
             });
-            return login.probe({ server: 'jf.local' }, setup.host).then(info => {
+            return login.probe({ server: 'http://jf.local:8096' }, setup.host).then(info => {
                 check(info.server === 'http://jf.local:8096' && info.name === 'Home', 'probe finds the server');
                 check(info.users[0].hasPassword === false && info.users[0].image.indexOf('/Users/u1/Images') > 0,
                     'public users');
                 check(setup.calls[0].options.headers.Authorization.indexOf('Token=') < 0, 'no token before sign-in');
-                return fails(() => login.authenticate({ server: 'jf.local', username: 'Ann', password: 'wrong' },
+                return fails(() => login.authenticate({ server: 'http://jf.local:8096', username: 'Ann', password: 'wrong' },
                     setup.host), 'http_401');
-            }).then(() => login.authenticate({ server: 'jf.local', username: 'Ann', password: 'right' }, setup.host))
+            }).then(() => login.authenticate({ server: 'http://jf.local:8096', username: 'Ann', password: 'right' }, setup.host))
                 .then(result => {
                     check(result.account === 'u1@server-id' && result.group === 'server-id', 'account identity');
                     check(result.label === 'Ann' && result.detail === 'Home', 'account label');

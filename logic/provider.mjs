@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: MPL-2.0
 // Jellyfin for Spool: one source per signed-in user.
 
-import { collectionTypes, detailFields, fields, item, page, segments, stream, time, trickplay } from './items.mjs';
+import { collectionTypes, detailFields, fields, item as mapItem, page as mapPage, segments, stream, time, trickplay } from './items.mjs';
 import { canCopySource, deviceProfile, maxBitrate } from './profile.mjs';
 import { connect } from './events.mjs';
+import { discoveryAddress, normalizeServer, serverCandidates } from './discovery.mjs';
+import { tickInteger, wireJson } from './wire.mjs';
+import { createCatalogue } from './catalogue.mjs';
+import { createSettings } from './settings.mjs';
+import { createRemote } from './remote.mjs';
 
 const remoteCommands = ['MoveUp', 'MoveDown', 'MoveLeft', 'MoveRight', 'PageUp', 'PageDown', 'PreviousLetter',
     'NextLetter', 'Select', 'Back', 'SendKey', 'SendString', 'VolumeUp', 'VolumeDown', 'Mute', 'Unmute',
@@ -41,21 +46,34 @@ function start(args) {
     return Number(cursor);
 }
 
-export function normalizeServer(input) {
-    let text = String(input || '').trim().replace(/\/+$/, '');
-    if (!/^https?:\/\//i.test(text))
-        text = 'http://' + text;
-    // A bare host gets Jellyfin's default port.
-    if (/^http:\/\/[^/:]+$/i.test(text))
-        text += ':8096';
-    return text;
-}
+export { normalizeServer };
 
 export function createSource(configuration, sourceHost) {
     const server = configuration.server ? normalizeServer(configuration.server) : '';
     const device = sourceHost.device || {};
     let token = configuration.token || '';
     let userId = configuration.userId || '';
+
+    const declared = ['spool.artwork-owners', 'spool.speed-test', 'spool.lan-probe',
+        'spool.suggestions', 'spool.item-actions', 'spool.collection-editing', 'spool.playback-queue-reporting',
+        'spool.playback-preferences', 'spool.settings-storage', 'spool.remote-targets'];
+    const extensions = {};
+    for (const id of declared) {
+        if (sourceHost.extensions && sourceHost.extensions[id] === 1)
+            extensions[id] = 1;
+    }
+    Object.freeze(extensions);
+    const missingHost = declared.filter(id => !extensions[id]);
+    const features = Object.freeze({ artworkOwners: extensions['spool.artwork-owners'] === 1 });
+    const item = raw => mapItem(raw, features);
+    const page = (result, first, limit) => mapPage(result, first, limit, features);
+    let lanSeen = new Set();
+    const userPath = path => '/Users/' + segment(userId) + path;
+
+    const catalogue = createCatalogue({ request, list, userPath, segment, extensions, userId });
+    const settings = createSettings({ request, userPath, extensions, userId });
+    const remote = createRemote({ request, item, userPath, userId, device, extensions, server, trickplay,
+        token, emit: sourceHost.emit });
 
     function authorization(overrideToken) {
         const value = overrideToken === undefined ? token : overrideToken;
@@ -71,15 +89,16 @@ export function createSource(configuration, sourceHost) {
             method: method,
             headers: { Authorization: authorization(base ? '' : undefined), 'Content-Type': 'application/json',
                 Accept: 'application/json' },
-            body: body === undefined ? '' : JSON.stringify(body)
+            body: body === undefined ? '' : wireJson(body)
         }).then(response => {
-            if (response.status < 200 || response.status >= 300)
+            if (response.status < 200 || response.status >= 300) {
+                if (response.status === 401 || response.status === 403)
+                    catalogue.invalidate();
                 throw new Error('http_' + response.status);
+            }
             return response.body ? JSON.parse(response.body) : {};
         });
     }
-
-    const userPath = path => '/Users/' + segment(userId) + path;
 
     function list(host, path, args, parameters) {
         const first = start(args);
@@ -109,7 +128,8 @@ export function createSource(configuration, sourceHost) {
     let disconnect = null;
     if (server && token && sourceHost.socket) {
         const socketUrl = server.replace(/^http/i, 'ws') + '/socket?' + query({ api_key: token, deviceId: device.id });
-        disconnect = connect(sourceHost, socketUrl, { Authorization: authorization() });
+        disconnect = connect(sourceHost, socketUrl, { Authorization: authorization() }, catalogue.invalidate,
+            extensions['spool.remote-targets'] === 1);
         // Tell the server what this client can be asked to do.
         sourceHost.http(server + '/Sessions/Capabilities/Full', {
             method: 'POST',
@@ -124,7 +144,16 @@ export function createSource(configuration, sourceHost) {
     }
 
     return {
+        extensionStatus: () => ({ enabled: extensions, missingHost: missingHost }),
+        remoteTargets: remote.remoteTargets,
+        remoteConnect: remote.remoteConnect,
+        remoteState: remote.remoteState,
+        remoteQueue: remote.remoteQueue,
+        remoteCommand: remote.remoteCommand,
+        remoteControls: remote.remoteControls,
+        remoteControl: remote.remoteControl,
         describe: () => ({
+            extensions: extensions,
             artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}',
             trickplay: server + '/Videos/{itemId}/Trickplay/{width}/{index}.jpg?MediaSourceId={variantId}'
         }),
@@ -138,22 +167,58 @@ export function createSource(configuration, sourceHost) {
                     try {
                         const info = JSON.parse(reply.text);
                         if (info.Id && info.Address)
-                            servers[info.Id] = { id: info.Id, name: info.Name || info.Address, address: info.Address };
+                            servers[info.Id] = { id: info.Id, name: info.Name || info.Address,
+                                address: discoveryAddress(info.Address, reply.address) };
                     } catch (error) {}
                 }
                 return { servers: Object.values(servers) };
             }),
+        discoverMore: (args, host) => {
+            if (extensions['spool.lan-probe'] !== 1 || typeof host.probeLocalHttp !== 'function')
+                throw new Error('unsupported_extension');
+            const options = { port: 8096, path: '/System/Info/Public', limit: 32 };
+            if (args.cursor !== undefined && args.cursor !== null)
+                options.cursor = args.cursor;
+            return host.probeLocalHttp(options).then(result => {
+                if (options.cursor === undefined)
+                    lanSeen = new Set();
+                const servers = [];
+                for (const response of result.responses) {
+                    if (response.status !== 200)
+                        continue;
+                    try {
+                        const info = JSON.parse(response.body);
+                        if (!info || typeof info.Id !== 'string' || !info.Id.trim() || info.Id.length > 256
+                            || typeof info.ServerName !== 'string' || !info.ServerName.trim()
+                            || info.ServerName.length > 256 || typeof info.Version !== 'string' || !info.Version
+                            || (info.ProductName !== undefined && info.ProductName !== 'Jellyfin')
+                            || lanSeen.has(info.Id))
+                            continue;
+                        const address = normalizeServer(response.origin);
+                        lanSeen.add(info.Id);
+                        servers.push({ id: info.Id, name: info.ServerName, address: address });
+                    } catch (error) {}
+                }
+                return { servers: servers, cursor: result.cursor, exhausted: result.exhausted };
+            });
+        },
+        serverCandidates: args => ({ servers: serverCandidates(args.server) }),
         probe: (args, host) => {
             const base = normalizeServer(args.server);
             return request(host, 'GET', '/System/Info/Public', {}, undefined, base).then(info => {
                 if (!info.Id)
                     throw new Error('not_jellyfin');
-                return request(host, 'GET', '/Users/Public', {}, undefined, base).then(users => ({
-                    server: base, id: info.Id, name: info.ServerName || '', version: info.Version || '',
-                    users: (Array.isArray(users) ? users : []).map(u => ({ id: u.Id, name: u.Name,
+                const users = request(host, 'GET', '/Users/Public', {}, undefined, base)
+                    .then(rows => (Array.isArray(rows) ? rows : []).map(u => ({ id: u.Id, name: u.Name,
                         image: u.PrimaryImageTag ? base + '/Users/' + u.Id + '/Images/Primary?tag=' + u.PrimaryImageTag + '&maxWidth=160' : '',
-                        hasPassword: u.HasPassword !== false }))
-                }), () => ({ server: base, id: info.Id, name: info.ServerName || '', users: [] }));
+                        hasPassword: u.HasPassword !== false })), () => []);
+                const quickConnect = request(host, 'GET', '/QuickConnect/Enabled', {}, undefined, base)
+                    .then(enabled => ({ quickConnectEnabled: enabled === true, quickConnectAvailable: typeof enabled === 'boolean' }),
+                        () => ({ quickConnectEnabled: false, quickConnectAvailable: false }));
+                return Promise.all([users, quickConnect]).then(([publicUsers, availability]) => Object.assign({
+                    server: base, id: info.Id, name: info.ServerName || '', version: info.Version || '',
+                    users: publicUsers
+                }, availability));
             });
         },
         authenticate: (args, host) => signIn(host, normalizeServer(args.server), '/Users/AuthenticateByName',
@@ -196,8 +261,19 @@ export function createSource(configuration, sourceHost) {
             return list(host, '/Items', args, parameters);
         },
         items: (args, host) => list(host, '/Items', args, { Ids: (args.ids || []).join(',') }),
-        search: (args, host) => list(host, '/Items', args, { SearchTerm: args.query, Recursive: true,
-            IncludeItemTypes: 'Movie,Series,Episode,MusicVideo,Video,Audio,MusicAlbum,MusicArtist,Book,AudioBook,BoxSet,Playlist' }),
+        search: catalogue.search,
+        suggestions: catalogue.suggestions,
+        itemActions: catalogue.itemActions,
+        collectionInfo: catalogue.collectionInfo,
+        collectionEntries: catalogue.collectionEntries,
+        collectionRemove: catalogue.collectionRemove,
+        collectionMove: catalogue.collectionMove,
+        preferencesRead: settings.preferencesRead,
+        preferencesWrite: settings.preferencesWrite,
+        dataInfo: settings.dataInfo,
+        dataRead: settings.dataRead,
+        dataWrite: settings.dataWrite,
+        dataDelete: settings.dataDelete,
         details: (args, host) => request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: detailFields })
             .then(raw => ({ item: item(raw) })),
         seasons: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Seasons', args),
@@ -218,12 +294,17 @@ export function createSource(configuration, sourceHost) {
             genres: result.Genres || [], years: result.Years || [], officialRatings: result.OfficialRatings || [],
             tags: result.Tags || []
         })),
-        speedTest: (args, host) => host.speedTest({
-            url: server + '/Playback/BitrateTest?size={bytes}&_={nonce}',
-            headers: { Authorization: authorization() }
-        }),
+        speedTest: (args, host) => {
+            if (extensions['spool.speed-test'] !== 1)
+                throw new Error('unsupported_extension');
+            return host.speedTest({
+                url: server + '/Playback/BitrateTest?size={bytes}&_={nonce}',
+                headers: { Authorization: authorization() }
+            });
+        },
 
         resolve: (args, host) => {
+            const position = tickInteger(args.positionTicks);
             // Only the server knows whether this connection is on its local network.
             // An unavailable classification must not turn an unknown route into an unlimited one.
             const localNetwork = args.unlimitedLocalNetwork && !args.maxBitrate
@@ -232,7 +313,7 @@ export function createSource(configuration, sourceHost) {
                 : Promise.resolve(false);
             const playbackInfo = localNetwork.then(local => request(host, 'POST',
                 '/Items/' + segment(args.itemId) + '/PlaybackInfo', { UserId: userId }, {
-                    UserId: userId, MediaSourceId: args.variantId, StartTimeTicks: Number(args.positionTicks) || 0,
+                    UserId: userId, MediaSourceId: args.variantId, StartTimeTicks: position,
                     MaxStreamingBitrate: maxBitrate(args, local), DeviceProfile: deviceProfile(args, local),
                     AudioStreamIndex: args.audioStreamIndex, SubtitleStreamIndex: args.subtitleStreamIndex,
                     EnableDirectPlay: !args.forceTranscode, EnableDirectStream: !args.forceTranscode,
@@ -288,13 +369,14 @@ export function createSource(configuration, sourceHost) {
             if (!endpoint)
                 throw new Error('invalid_report');
             const index = value => (Number.isInteger(value) && value >= 0 ? value : undefined);
-            return request(host, 'POST', endpoint, {}, {
+            return request(host, 'POST', endpoint, {}, Object.assign({
                 ItemId: args.itemId, MediaSourceId: args.variantId, PlaySessionId: args.playSessionId,
-                PositionTicks: Number(args.positionTicks) || 0, IsPaused: Boolean(args.paused),
+                PositionTicks: tickInteger(args.positionTicks), IsPaused: Boolean(args.paused),
                 IsMuted: Boolean(args.muted), VolumeLevel: args.volume, PlaybackRate: args.rate || 1,
                 PlayMethod: args.playMethod, AudioStreamIndex: index(args.audioStreamIndex),
-                SubtitleStreamIndex: index(args.subtitleStreamIndex), CanSeek: true, Failed: Boolean(args.failed)
-            }).then(() => ({}));
+                SubtitleStreamIndex: args.subtitleStreamIndex === -1 ? -1 : index(args.subtitleStreamIndex),
+                CanSeek: true, Failed: Boolean(args.failed)
+            }, catalogue.queueFields(args))).then(() => ({}));
         },
 
         favorite: (args, host) => request(host, args.value ? 'POST' : 'DELETE',
@@ -302,10 +384,10 @@ export function createSource(configuration, sourceHost) {
         played: (args, host) => request(host, args.value ? 'POST' : 'DELETE',
             userPath('/PlayedItems/' + segment(args.itemId))).then(() => ({})),
         progress: (args, host) => request(host, 'POST', userPath('/Items/' + segment(args.itemId) + '/UserData'), {},
-            { PlaybackPositionTicks: Number(args.positionTicks) || 0 }).then(() => ({})),
+            { PlaybackPositionTicks: tickInteger(args.positionTicks) }).then(() => ({})),
 
         // Item menu actions from manifest.json; `pick` shows ui/Picker.qml.
-        runItemAction: (args, host) => {
+        runItemAction: (args, host) => catalogue.authorizeAction(args, host).then(() => {
             const id = segment(args.itemId);
             switch (args.action) {
             case 'playlist':
@@ -336,7 +418,7 @@ export function createSource(configuration, sourceHost) {
             default:
                 throw new Error('unsupported_action');
             }
-        },
+        }),
         // Where an item could be added, for the picker.
         targets: (args, host) => request(host, 'GET', '/Items', { UserId: userId, Recursive: true,
             IncludeItemTypes: args.kind === 'playlist' ? 'Playlist' : 'BoxSet', SortBy: 'SortName', Limit: 500 })
@@ -354,18 +436,18 @@ export function createSource(configuration, sourceHost) {
             switch (args.action) {
             case 'pause': return groupAction(host, 'Pause');
             case 'unpause': return groupAction(host, 'Unpause');
-            case 'seek': return groupAction(host, 'Seek', { PositionTicks: Number(args.positionTicks) || 0 });
+            case 'seek': return groupAction(host, 'Seek', { PositionTicks: tickInteger(args.positionTicks) });
             case 'next': return groupAction(host, 'NextItem', { PlaylistItemId: entry });
             case 'previous': return groupAction(host, 'PreviousItem', { PlaylistItemId: entry });
             case 'play': return groupAction(host, 'SetPlaylistItem', { PlaylistItemId: entry });
             case 'setQueue': return groupAction(host, 'SetNewQueue', { PlayingQueue: args.itemIds,
-                PlayingItemPosition: args.index, StartPositionTicks: Number(args.positionTicks) || 0 });
+                PlayingItemPosition: args.index, StartPositionTicks: tickInteger(args.positionTicks) });
             case 'queue': return groupAction(host, 'Queue', { ItemIds: args.itemIds, Mode: args.next ? 'QueueNext' : 'Queue' });
             case 'move': return groupAction(host, 'MovePlaylistItem', { PlaylistItemId: entry, NewIndex: Math.max(0, args.index) });
             case 'remove': return groupAction(host, 'RemoveFromPlaylist', { PlaylistItemIds: args.entryIds,
                 ClearPlaylist: false, ClearPlayingItem: false });
             case 'buffering': return groupAction(host, args.buffering ? 'Buffering' : 'Ready', {
-                When: new Date(args.at).toISOString(), PositionTicks: Number(args.positionTicks) || 0,
+                When: new Date(args.at).toISOString(), PositionTicks: tickInteger(args.positionTicks),
                 IsPlaying: Boolean(args.playing), PlaylistItemId: entry });
             case 'ping': return groupAction(host, 'Ping', { Ping: Math.round(args.ms) });
             default: throw new Error('invalid_group_action');

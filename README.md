@@ -12,17 +12,95 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | `logic/items.mjs` | Jellyfin JSON to Spool's item shape |
 | `logic/profile.mjs` | The DeviceProfile sent with every playback request |
 | `logic/events.mjs` | The server's websocket, as group, remote-control and change events |
+| `logic/discovery.mjs` | Validated manual candidates and UDP sender correction |
+| `logic/wire.mjs` | Exact signed-64-bit tick request encoding |
+| `logic/settings.mjs` | Optional native preferences and application-owned DisplayPreferences documents |
+| `logic/remote.mjs` | Negotiated outbound session control and occurrence-aware remote queues |
 | `ui/Login.qml` | Servers found on the network or typed in; password or Quick Connect |
 | `ui/Picker.qml` | Choosing a playlist or collection, renaming, confirming a delete |
+| `ui/RemoteControls.qml` | Capability-gated navigation, text and service controls for the selected peer |
 
 Several users and several servers can be signed in at once. Users of the same server are alternatives
 to each other in Spool; different servers are shown together.
 
-Inherited thumbnails and backdrops preserve the parent image's item ID as well
-as its tag. This needs Spool's `thumbItemId`/`backdropItemId` artwork contract;
-home rails must not request a series or season image under an episode ID.
+Optional features use exact version-one declarations, not the application version:
+`spool.artwork-owners` preserves inherited thumbnail/backdrop owners and
+`spool.speed-test` enables native throughput probes. On API 0.2 hosts without these
+extensions, baseline login, browsing, playback and reporting remain available.
+Inherited thumbnail/backdrop tags are omitted while own images and baseline
+series/album poster fallbacks remain. Speed testing is not a legacy capability.
+Login, settings and item pickers use the baseline `extensionStatus` request to show
+“Update Spool to use all features of this provider.” when host support is missing.
 
-The `speedTest` capability lets Spool measure each account's route using Jellyfin's authenticated
+The version-one `spool.suggestions`, `spool.item-actions`,
+`spool.collection-editing` and `spool.playback-queue-reporting` extensions add
+bounded server suggestions, permission-aware menus, occurrence-aware playlist
+editing and native NowPlayingQueue reporting. Search runs dedicated Series and
+mixed-type queries concurrently, prioritizes Series, deduplicates and returns a
+bounded complete top-N set rather than an index continuation. Suggestions use
+Jellyfin's favorite/liked-plus-random video query, never Continue Watching.
+
+Permissions are loaded only when opening an action/editor and cached per source;
+authorization failures, user-change notifications and reconnects invalidate the
+account policy. Baseline actions also check policy before mutation. Playlist
+editing checks the current user's granular playlist permission when supported,
+falling back conservatively to explicit item edit rights, ownership or explicit
+administrator policy on older servers. Playlist edits use opaque occurrence IDs;
+collections permit membership removal but not reordering. Start/progress reports
+reuse a source-owned queue snapshot, preserving duplicates; stop reports are
+unchanged. Backend permission failures are not host-upgrade notices.
+
+`spool.remote-targets` adds outbound control independently of inbound remote
+commands and SyncPlay. Discovery asks `/Sessions?controllableByUserId=...`, checks
+the session's nested media-control capabilities and excludes this installation.
+Selecting a device only reads state. Unknown duration/volume and nonexistent
+command acknowledgements stay absent; stream controls use native stream indices.
+Queue rows preserve every occurrence, with missing metadata fetched in batches
+of at most 50 unique IDs. A bounded snapshot supplies subsequent queue pages.
+
+Remote queue edits **restart playback**, rather than pretending to mutate a
+client's queue in place. A surviving current occurrence keeps its position;
+removing it starts the nearest surviving successor at zero, and removing the
+last entry sends Stop. Paused playback is restored only after the replacement
+queue/current occurrence and position are confirmed. Uncertain mutations are
+not retried blindly. General navigation, text and device-specific controls stay
+in the provider picker and are offered only when the peer advertises them.
+Available Jellyfin trickplay binds the playing item and media source; its tile
+URL stays on the configured server origin and carries authentication only for
+that origin. No local player state is changed to display remote previews.
+
+The adapter follows Jellyfin's
+[session controller](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/SessionController.cs).
+Protocol fixtures and loopback exercises are not a claim of live-client support
+for every command: the peer's advertised capabilities and server authorization
+remain authoritative.
+
+`spool.playback-preferences` exposes the signed-in user's audio/subtitle languages,
+Default/Smart audio mode and Default/Smart/OnlyForced/Always/None subtitle mode.
+Every write fetches current `Configuration` and `Policy`, respects
+`EnableUserPreferenceAccess`, and posts only the four mapped changes merged into
+the full configuration. It never writes administrator policy. Unknown or missing
+enum values remain read-only; two-letter language normalization belongs to Spool.
+
+`spool.settings-storage` uses one canonical lowercase UUID DisplayPreferences
+record per document and signed-in user, partitioned by client `Spool`. Only
+`CustomPrefs["spool.data.v1"]` contains application JSON; unrelated DTO fields and
+CustomPrefs survive writes/deletes. Jellyfin GET and POST both send `userId` and
+`client` through the configured server base path. Values, including JSON null,
+are bounded to 64 KiB UTF-8 and 16 container levels; absence is distinct from null.
+Malformed, too-deep or oversized existing data is never automatically overwritten
+or deleted. This replacement-only store advertises `conditionalWrites:false` and
+rejects any supplied revision condition before HTTP. It provides no atomic CAS
+guarantee. Missing endpoints and permission failures are reported separately from
+authentication failures or a missing-host update notice.
+
+These adapters follow Jellyfin's
+[DisplayPreferences controller](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/DisplayPreferencesController.cs).
+Their stateful protocol fixtures cover preservation, per-account/document
+isolation, complete enum round-trips, policy denial, null/absence, conditional
+rejection and document size/depth/corruption boundaries.
+
+The `spool.speed-test` extension lets Spool measure each account's route using Jellyfin's authenticated
 `/Playback/BitrateTest?size={bytes}&_={nonce}` endpoint. The provider preserves the server's reverse-proxy
 base path and sends the account token in the authorization header, not the URL. Spool's native host
 performs the streaming benchmark and chooses the bitrate and number of parallel requests.
@@ -37,6 +115,32 @@ Height limits remain in force on local routes. A remux uses the server's
 negotiated URL, never an unbounded static-file fallback; forced transcoding
 disables video stream copy and fails if no transcoded stream is available.
 Codec restrictions never advertise an unsupported fallback output codec.
+
+Playback, resume updates, and SyncPlay send decimal tick integers without rounding
+through JavaScript numbers; invalid or overflowing values fail before HTTP.
+Subtitle Off remains `-1`, and playlist rows preserve their occurrence identity as
+`entryId` separately from the media ID.
+
+Manual DNS addresses without a scheme try HTTPS first, then HTTP on the supplied
+port (or 8096), then the default HTTP port. Private addresses and localhost try
+HTTP on the supplied port (or 8096) first. Explicit schemes, ports, and base paths
+are preserved; explicit HTTPS never falls back to HTTP. Each candidate goes through
+Spool's origin approval before probing. UDP discovery corrects advertised literal
+IP addresses to the packet sender while preserving DNS names, schemes, ports, and
+base paths.
+
+On hosts negotiating `spool.lan-probe` version 1, login also offers **Search local
+network**. This starts only after the viewer requests it and approves Spool's
+local-network consent prompt. The host probes unauthenticated
+`/System/Info/Public` on port 8096 in bounded pages of at most 32 targets.
+Login validates public information, deduplicates server IDs across pages and UDP
+replies, and shows progress with Cancel/Back support. Closing login cancels the
+search. Discovery itself never grants a server origin: selecting a result still
+uses normal origin approval before sign-in. Older hosts keep UDP/manual discovery
+and hide this control; no subnet search starts at app launch or in the background.
+
+Quick Connect is offered only when `/QuickConnect/Enabled` returns true.
+Unavailable discovery leaves password login usable and offers an availability retry.
 
 ## Development
 
