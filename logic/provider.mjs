@@ -54,7 +54,7 @@ export function createSource(configuration, sourceHost) {
     let token = configuration.token || '';
     let userId = configuration.userId || '';
 
-    const declared = ['spool.artwork-owners', 'spool.speed-test', 'spool.lan-probe',
+    const declared = ['spool.artwork-owners', 'spool.speed-test',
         'spool.suggestions', 'spool.item-actions', 'spool.collection-editing', 'spool.playback-queue-reporting',
         'spool.playback-preferences', 'spool.settings-storage', 'spool.remote-targets'];
     const extensions = {};
@@ -67,7 +67,6 @@ export function createSource(configuration, sourceHost) {
     const features = Object.freeze({ artworkOwners: extensions['spool.artwork-owners'] === 1 });
     const item = raw => mapItem(raw, features);
     const page = (result, first, limit) => mapPage(result, first, limit, features);
-    let lanSeen = new Set();
     const userPath = path => '/Users/' + segment(userId) + path;
 
     const catalogue = createCatalogue({ request, list, userPath, segment, extensions, userId });
@@ -173,35 +172,6 @@ export function createSource(configuration, sourceHost) {
                 }
                 return { servers: Object.values(servers) };
             }),
-        discoverMore: (args, host) => {
-            if (extensions['spool.lan-probe'] !== 1 || typeof host.probeLocalHttp !== 'function')
-                throw new Error('unsupported_extension');
-            const options = { port: 8096, path: '/System/Info/Public', limit: 32 };
-            if (args.cursor !== undefined && args.cursor !== null)
-                options.cursor = args.cursor;
-            return host.probeLocalHttp(options).then(result => {
-                if (options.cursor === undefined)
-                    lanSeen = new Set();
-                const servers = [];
-                for (const response of result.responses) {
-                    if (response.status !== 200)
-                        continue;
-                    try {
-                        const info = JSON.parse(response.body);
-                        if (!info || typeof info.Id !== 'string' || !info.Id.trim() || info.Id.length > 256
-                            || typeof info.ServerName !== 'string' || !info.ServerName.trim()
-                            || info.ServerName.length > 256 || typeof info.Version !== 'string' || !info.Version
-                            || (info.ProductName !== undefined && info.ProductName !== 'Jellyfin')
-                            || lanSeen.has(info.Id))
-                            continue;
-                        const address = normalizeServer(response.origin);
-                        lanSeen.add(info.Id);
-                        servers.push({ id: info.Id, name: info.ServerName, address: address });
-                    } catch (error) {}
-                }
-                return { servers: servers, cursor: result.cursor, exhausted: result.exhausted };
-            });
-        },
         serverCandidates: args => ({ servers: serverCandidates(args.server) }),
         probe: (args, host) => {
             const base = normalizeServer(args.server);

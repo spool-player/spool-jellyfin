@@ -65,7 +65,7 @@ function account(user, token, extensions) {
 
 function extensionCompatibility() {
     step = 'optional extensions and legacy artwork';
-    const declared = { 'spool.artwork-owners': 1, 'spool.speed-test': 1, 'spool.lan-probe': 1,
+    const declared = { 'spool.artwork-owners': 1, 'spool.speed-test': 1,
         'spool.suggestions': 1, 'spool.item-actions': 1, 'spool.collection-editing': 1,
         'spool.playback-queue-reporting': 1, 'spool.playback-preferences': 1, 'spool.settings-storage': 1,
         'spool.remote-targets': 1 };
@@ -103,55 +103,6 @@ function extensionCompatibility() {
                     && row.backdropItemId === 'series' && row.backdropTag === 'parent-backdrop',
                     'each source applies its own negotiated artwork options');
         });
-}
-
-function lanDiscovery() {
-    step = 'consented local discovery';
-    const source = createSource({}, { device: device, extensions: { 'spool.lan-probe': 1 } });
-    const response = (id, overrides) => ({ origin: 'http://127.0.0.1:8096', status: 200,
-        body: JSON.stringify(Object.assign({ Id: id, ServerName: 'Local server', Version: '10.10.0',
-            ProductName: 'Jellyfin', LocalAddress: 'http://untrusted.example' }, overrides || {})) });
-    const pages = [
-        { responses: [response('one'), response('one'), response('foreign', { ProductName: 'Emby Server' }),
-            response('invalid', { ServerName: 42 }), response('', {}),
-            { origin: 'http://127.0.0.1:8096', status: 200, body: 'not json' },
-            Object.assign(response('redirect'), { status: 302 })], cursor: 'opaque:next', exhausted: false },
-        { responses: [response('one'), response('two')], cursor: null, exhausted: true },
-        { responses: [response('one')], cursor: null, exhausted: true }
-    ];
-    let calls = 0;
-    const host = { probeLocalHttp: options => {
-        check(options.port === 8096 && options.path === '/System/Info/Public' && options.limit === 32,
-            'bounded public-info discovery uses the unauthenticated native probe');
-        check(calls === 1 ? options.cursor === 'opaque:next' : options.cursor === undefined,
-            'opaque continuation is forwarded; fresh searches do not carry a cursor');
-        return Promise.resolve(pages[calls++]);
-    } };
-    return fails(() => createSource({}, { device: device }).discoverMore({}, host), 'unsupported_extension')
-        .then(() => fails(() => createSource({}, { extensions: { 'spool.lan-probe': 2 } }).discoverMore({}, host),
-            'unsupported_extension'))
-        .then(() => fails(() => source.discoverMore({}, {}), 'unsupported_extension'))
-        .then(() => {
-            check(calls === 0, 'old hosts cannot start local probing');
-            return source.discoverMore({}, host);
-        }).then(first => {
-            check(first.servers.length === 1 && first.servers[0].id === 'one'
-                && first.servers[0].address === 'http://127.0.0.1:8096'
-                && first.cursor === 'opaque:next' && first.exhausted === false,
-                'only validated Jellyfin public info is offered, using the probed origin rather than advertised URLs');
-            return source.discoverMore({ cursor: first.cursor }, host);
-        }).then(second => {
-            check(second.servers.length === 1 && second.servers[0].id === 'two'
-                && second.cursor === null && second.exhausted === true,
-                'duplicate server IDs across pages are omitted without losing terminal state');
-            return source.discoverMore({}, host);
-        }).then(restarted => {
-            check(restarted.servers.length === 1 && restarted.servers[0].id === 'one', 'fresh scans reset seen IDs');
-            return source.discoverMore({}, { probeLocalHttp: () =>
-                Promise.resolve({ responses: [], cursor: null, exhausted: true }) });
-        })
-        .then(empty => check(empty.servers.length === 0 && empty.exhausted === true,
-            'no local interfaces leaves an empty completed search'));
 }
 
 // Baseline repairs are exercised through provider operations, including the raw
@@ -344,7 +295,7 @@ export function run() {
     });
 
     step = 'browse';
-    return extensionCompatibility().then(baselineRepairs).then(lanDiscovery).then(catalogueContracts)
+    return extensionCompatibility().then(baselineRepairs).then(catalogueContracts)
         .then(() => settingsContracts()).then(() => remoteContracts()).then(() => {
         step = 'browse';
         return Promise.all([a.browse({ limit: 1 }, jf.host), b.browse({ limit: 1 }, jf.host)]);

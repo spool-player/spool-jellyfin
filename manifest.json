@@ -11,7 +11,7 @@
   "entry": "logic/provider.mjs",
   "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
     "groupPlayback", "remoteControl"],
-  "extensions": {"spool.artwork-owners": 1, "spool.speed-test": 1, "spool.lan-probe": 1,
+  "extensions": {"spool.artwork-owners": 1, "spool.speed-test": 1,
     "spool.suggestions": 1, "spool.item-actions": 1, "spool.collection-editing": 1,
     "spool.playback-queue-reporting": 1, "spool.playback-preferences": 1, "spool.settings-storage": 1,
     "spool.remote-targets": 1},

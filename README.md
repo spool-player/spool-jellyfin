@@ -141,15 +141,10 @@ Spool's origin approval before probing. UDP discovery corrects advertised litera
 IP addresses to the packet sender while preserving DNS names, schemes, ports, and
 base paths.
 
-On hosts negotiating `spool.lan-probe` version 1, login also offers **Search local
-network**. This starts only after the viewer requests it and approves Spool's
-local-network consent prompt. The host probes unauthenticated
-`/System/Info/Public` on port 8096 in bounded pages of at most 32 targets.
-Login validates public information, deduplicates server IDs across pages and UDP
-replies, and shows progress with Cancel/Back support. Closing login cancels the
-search. Discovery itself never grants a server origin: selecting a result still
-uses normal origin approval before sign-in. Older hosts keep UDP/manual discovery
-and hide this control; no subnet search starts at app launch or in the background.
+Login asks the network for servers with Jellyfin's UDP discovery (port 7359) as soon as it
+opens and repeats every few seconds while a server is being chosen, so servers on the local
+network appear without a button. Discovery itself never grants a server origin: selecting a
+result still uses normal origin approval before sign-in.
 
 Quick Connect is offered only when `/QuickConnect/Enabled` returns true.
 Unavailable discovery leaves password login usable and offers an availability retry.
