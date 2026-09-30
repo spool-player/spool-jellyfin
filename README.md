@@ -28,9 +28,11 @@ matching Spool build exposing `ServerLogin`, `ProviderActionPicker` and
 `ProviderRemoteControls`. Playback/appearance settings live in Spool; the redundant
 provider settings page has been removed.
 
-Trickplay sheet URLs carry the owning account's URL-encoded token so protected
-preview images can authenticate independently of the player's media headers.
-The host fetches previews on demand rather than decoding every sheet at playback start.
+Playback and protected trickplay sheets use the owning account's full
+`Authorization: MediaBrowser …` header, including the saved device identity.
+Preview URLs contain no account token. The host fetches previews on demand
+through its account-scoped artwork loader, including remote-control previews;
+it does not decode every sheet at playback start.
 
 
 Optional features use exact version-one declarations, not the application version:

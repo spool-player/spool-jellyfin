@@ -137,8 +137,8 @@ export function createRemote(options) {
             .every(key => Number.isSafeInteger(descriptor[key]) && descriptor[key] > 0))
             return undefined;
         return Object.assign({}, descriptor, { urlTemplate: server + '/Videos/' + encodeURIComponent(media.Id)
-            + '/Trickplay/' + descriptor.width + '/{index}.jpg?MediaSourceId=' + encodeURIComponent(variant)
-            + '&api_key=' + encodeURIComponent(options.token) });
+            + '/Trickplay/' + descriptor.width + '/{index}.jpg?MediaSourceId=' + encodeURIComponent(variant),
+            headers: { Authorization: options.authorization() } });
     }
     function normalize(raw) {
         const play = raw.PlayState || {};

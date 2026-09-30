@@ -73,7 +73,7 @@ export function createSource(configuration, sourceHost) {
     const catalogue = createCatalogue({ request, list, userPath, segment, extensions, userId });
     const settings = createSettings({ request, userPath, extensions, userId });
     const remote = createRemote({ request, item, userPath, userId, device, extensions, server, trickplay,
-        token, emit: sourceHost.emit });
+        authorization, emit: sourceHost.emit });
 
     function authorization(overrideToken) {
         const value = overrideToken === undefined ? token : overrideToken;
@@ -156,7 +156,6 @@ export function createSource(configuration, sourceHost) {
             extensions: extensions,
             artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}',
             trickplay: server + '/Videos/{itemId}/Trickplay/{width}/{index}.jpg?MediaSourceId={variantId}'
-                + '&api_key=' + encodeURIComponent(token)
         }),
 
         // Sign-in. These run before the account exists, against `server`
@@ -356,7 +355,7 @@ export function createSource(configuration, sourceHost) {
                 } else {
                     throw new Error('selected_variant_unplayable');
                 }
-                return { url: url, headers: { 'X-Emby-Token': token }, variantId: source.Id,
+                return { url: url, headers: { Authorization: authorization() }, variantId: source.Id,
                     playSessionId: info.PlaySessionId || '', playMethod: playMethod,
                     container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(stream),
                     segments: skip, trickplay: trickplay(raw, source.Id) };

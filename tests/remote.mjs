@@ -155,6 +155,10 @@ export function remoteContracts(emby = false) {
             && state.subtitleTracks[0].id === '7' && !state.subtitleTracks[0].selected, 'tracks use native stream indices and Off remains unselected');
         check(emby ? state.preview === undefined : state.preview.columns === 5 && state.preview.urlTemplate.indexOf('/film/Trickplay/320/{index}.jpg') >= 0,
             'Jellyfin tiles bind the playing item and selected variant only');
+        if (!emby)
+            check(state.preview.urlTemplate.indexOf('api_key=') < 0
+                && state.preview.headers.Authorization.indexOf('Token="account-token"') >= 0,
+                'protected remote previews use account authorization without query credentials');
         return source.remoteQueue({ targetId: 'target', limit: 2 }, host);
     }).then(page => {
         check(page.items.map(row => row.id).join(',') === 'film,film'

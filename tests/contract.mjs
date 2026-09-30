@@ -311,13 +311,6 @@ export function run() {
 
     const a = account('ua', 'token-a');
     const b = account('ub', 'token-b');
-    for (const [source, expected] of [[a, 'token-a'], [b, 'token-b'],
-        [account('special', 'token&+/#?'), 'token&+/#?']]) {
-        const query = source.describe().trickplay.split('?')[1].split('&');
-        const credentials = query.filter(part => part.split('=')[0] === 'api_key');
-        check(credentials.length === 1 && decodeURIComponent(credentials[0].slice(8)) === expected,
-            'protected trickplay sheets authenticate as their own account, including reserved token characters');
-    }
 
     const film = { Id: 'film', Name: 'Film', Type: 'Movie', ProductionYear: 2020, RunTimeTicks: 72000000000,
         ProviderIds: { Imdb: 'tt1' }, UserData: { IsFavorite: true, PlaybackPositionTicks: 500 },
@@ -416,7 +409,8 @@ export function run() {
             check(result.url.indexOf('https://media.example/jf/Videos/film/stream?') === 0
                 && result.url.indexOf('MediaSourceId=theatrical') > 0 && result.url.indexOf('DeviceId=device-1') > 0,
                 'stream URL');
-            check(result.headers['X-Emby-Token'] === 'token-a', 'stream credentials');
+            check(result.headers.Authorization.indexOf('Token="token-a"') >= 0
+                && result.headers.Authorization.indexOf('DeviceId="device-1"') >= 0, 'stream credentials include device identity');
             check(result.segments.length === 1 && result.segments[0].type === 'Intro', 'known segments only');
             const info = jf.calls.filter(c => c.path === '/Items/film/PlaybackInfo').pop().body;
             check(info.MediaSourceId === 'theatrical' && info.DeviceProfile, 'the edition and profile are sent');
