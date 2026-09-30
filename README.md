@@ -16,12 +16,22 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | `logic/wire.mjs` | Exact signed-64-bit tick request encoding |
 | `logic/settings.mjs` | Optional native preferences and application-owned DisplayPreferences documents |
 | `logic/remote.mjs` | Negotiated outbound session control and occurrence-aware remote queues |
-| `ui/Login.qml` | Servers found on the network or typed in; password or Quick Connect |
-| `ui/Picker.qml` | Choosing a playlist or collection, renaming, confirming a delete |
-| `ui/RemoteControls.qml` | Capability-gated navigation, text and service controls for the selected peer |
+| `ui/Login.qml` | Service labels and Quick Connect operations for Spool's compiled `ServerLogin` |
+| `ui/Picker.qml` | Service command mappings for compiled item pickers and device controls |
 
 Several users and several servers can be signed in at once. Users of the same server are alternatives
 to each other in Spool; different servers are shown together.
+
+Generic login, server identity, item-action and device-control layouts are precompiled
+into Spool, not shipped as duplicate provider screens. Use this provider with the
+matching Spool build exposing `ServerLogin`, `ProviderActionPicker` and
+`ProviderRemoteControls`. Playback/appearance settings live in Spool; the redundant
+provider settings page has been removed.
+
+Trickplay sheet URLs carry the owning account's URL-encoded token so protected
+preview images can authenticate independently of the player's media headers.
+The host fetches previews on demand rather than decoding every sheet at playback start.
+
 
 Optional features use exact version-one declarations, not the application version:
 `spool.artwork-owners` preserves inherited thumbnail/backdrop owners and
@@ -29,8 +39,8 @@ Optional features use exact version-one declarations, not the application versio
 extensions, baseline login, browsing, playback and reporting remain available.
 Inherited thumbnail/backdrop tags are omitted while own images and baseline
 series/album poster fallbacks remain. Speed testing is not a legacy capability.
-Login, settings and item pickers use the baseline `extensionStatus` request to show
-“Update Spool to use all features of this provider.” when host support is missing.
+Compiled login and item pickers use the context's `missingHostExtensions` to show
+“Update Spool to use all features of this provider.” when optional host support is missing.
 
 The version-one `spool.suggestions`, `spool.item-actions`,
 `spool.collection-editing` and `spool.playback-queue-reporting` extensions add

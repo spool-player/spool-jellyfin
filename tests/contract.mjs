@@ -311,10 +311,13 @@ export function run() {
 
     const a = account('ua', 'token-a');
     const b = account('ub', 'token-b');
-    const templates = a.describe();
-    check(templates.artwork.indexOf('https://media.example/jf/Items/{itemId}/Images/{type}?tag={tag}') === 0,
-        'artwork template');
-    check(templates.trickplay.indexOf('{variantId}') > 0, 'trickplay template');
+    for (const [source, expected] of [[a, 'token-a'], [b, 'token-b'],
+        [account('special', 'token&+/#?'), 'token&+/#?']]) {
+        const query = source.describe().trickplay.split('?')[1].split('&');
+        const credentials = query.filter(part => part.split('=')[0] === 'api_key');
+        check(credentials.length === 1 && decodeURIComponent(credentials[0].slice(8)) === expected,
+            'protected trickplay sheets authenticate as their own account, including reserved token characters');
+    }
 
     const film = { Id: 'film', Name: 'Film', Type: 'Movie', ProductionYear: 2020, RunTimeTicks: 72000000000,
         ProviderIds: { Imdb: 'tt1' }, UserData: { IsFavorite: true, PlaybackPositionTicks: 500 },

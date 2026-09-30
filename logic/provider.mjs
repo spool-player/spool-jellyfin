@@ -156,6 +156,7 @@ export function createSource(configuration, sourceHost) {
             extensions: extensions,
             artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}',
             trickplay: server + '/Videos/{itemId}/Trickplay/{width}/{index}.jpg?MediaSourceId={variantId}'
+                + '&api_key=' + encodeURIComponent(token)
         }),
 
         // Sign-in. These run before the account exists, against `server`
