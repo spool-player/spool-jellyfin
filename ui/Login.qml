@@ -7,6 +7,8 @@ ServerLogin {
     codeStartOperation: "quickConnectStart"
     codePollOperation: "quickConnectPoll"
     codeInstructions: "Enter this code in Quick Connect on a signed-in device."
+    codeEnabledField: "quickConnectEnabled"
+    codeAvailableField: "quickConnectAvailable"
     errorMessages: ({
                         not_jellyfin: "Not a Jellyfin server",
                         quick_connect_off: "Quick Connect is off on this server"
