@@ -158,6 +158,8 @@ cmake -S sdk -B build/sdk && cmake --build build/sdk
 build/sdk/provider-contract-runner tests/contract.mjs
 QV4_FORCE_INTERPRETER=1 build/sdk/provider-contract-runner tests/contract.mjs
 python3 sdk/spool-provider.py build .          # dist/spool.jellyfin-<version>.tar.zst
+VERSION=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
+python3 sdk/spool-provider.py validate "dist/spool.jellyfin-$VERSION.tar.zst"
 ```
 
 `tests/contract.mjs` runs the provider against a scripted server in Qt's JS engine, the one Spool uses.
@@ -165,6 +167,9 @@ To try a checkout in Spool without releasing it, configure Spool with
 `-DSPOOL_PROVIDER_OVERRIDES=spool.jellyfin=/path/to/spool-jellyfin`.
 
 ## Releasing
+
+Current release: **0.2.8**, retaining the authenticated playback previews,
+provider-owned sign-in capabilities and UDP-only local discovery from 0.2.7.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool
