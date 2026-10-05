@@ -126,19 +126,10 @@ export function createRemote(options) {
         return matches.length === 1 ? matches[0] : -1;
     }
     function preview(raw, media) {
-        if (emby || !options.trickplay || !media || !media.Trickplay)
+        if (!options.trickplay || !media)
             return undefined;
-        const variant = identity((raw.PlayState || {}).MediaSourceId);
-        // Do not use a different variant's tile map when the current one is unknown.
-        if (!variant || !media.Trickplay[variant])
-            return undefined;
-        const descriptor = options.trickplay(media, variant);
-        if (!descriptor || !['width', 'height', 'columns', 'rows', 'count', 'intervalMs']
-            .every(key => Number.isSafeInteger(descriptor[key]) && descriptor[key] > 0))
-            return undefined;
-        return Object.assign({}, descriptor, { urlTemplate: server + '/Videos/' + encodeURIComponent(media.Id)
-            + '/Trickplay/' + descriptor.width + '/{index}.jpg?MediaSourceId=' + encodeURIComponent(variant),
-            headers: { Authorization: options.authorization() } });
+        return options.trickplay(media, identity((raw.PlayState || {}).MediaSourceId), server,
+            { Authorization: options.authorization() });
     }
     function normalize(raw) {
         const play = raw.PlayState || {};

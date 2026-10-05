@@ -110,14 +110,18 @@ export function page(result, start, limit, features = {}) {
 }
 
 // The widths the server made previews at, nearest to what the player draws.
-export function trickplay(raw, variantId) {
-    const all = raw && raw.Trickplay ? raw.Trickplay[variantId] || Object.values(raw.Trickplay)[0] : null;
-    if (!all)
+export function trickplay(raw, variantId, server, headers) {
+    const all = raw && raw.Trickplay && variantId ? raw.Trickplay[variantId] : null;
+    if (!all || !raw.Id)
         return undefined;
-    const widths = Object.values(all).sort((a, b) => Math.abs(a.Width - 320) - Math.abs(b.Width - 320));
+    const widths = Object.values(all).filter(info => info && ['Width', 'Height', 'TileWidth', 'TileHeight',
+        'ThumbnailCount', 'Interval'].every(key => Number.isSafeInteger(info[key]) && info[key] > 0))
+        .sort((a, b) => Math.abs(a.Width - 320) - Math.abs(b.Width - 320));
     const best = widths[0];
     return best ? { width: best.Width, height: best.Height, columns: best.TileWidth, rows: best.TileHeight,
-        count: best.ThumbnailCount, intervalMs: best.Interval } : undefined;
+        count: best.ThumbnailCount, intervalMs: best.Interval,
+        urlTemplate: server + '/Videos/' + encodeURIComponent(raw.Id) + '/Trickplay/' + best.Width
+            + '/{index}.jpg?MediaSourceId=' + encodeURIComponent(variantId), headers: headers } : undefined;
 }
 
 const segmentTypes = { Intro: 'Intro', Outro: 'Outro', Recap: 'Recap', Preview: 'Preview', Commercial: 'Commercial' };

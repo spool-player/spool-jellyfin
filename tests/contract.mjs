@@ -230,6 +230,39 @@ function baselineRepairs() {
     });
 }
 
+function previewContracts() {
+    step = 'per-playback sprite sheet descriptors';
+    const tile = { Width: 320, Height: 180, TileWidth: 4, TileHeight: 3, ThumbnailCount: 25, Interval: 1000 };
+    const variants = ['selected /+?', 'other', 'missing'];
+    let metadata = { Id: 'film', Trickplay: {
+        'selected /+?': { invalid: Object.assign({}, tile, { Interval: 0 }),
+            small: Object.assign({}, tile, { Width: 256, Height: 144 }), large: Object.assign({}, tile, { Width: 640 }) },
+        other: { 320: tile }
+    } };
+    const fixture = server({
+        'POST /Items/film/PlaybackInfo': { MediaSources: variants.map(Id => ({ Id: Id, SupportsDirectPlay: true })) },
+        'GET /Users/ua/Items/film': () => metadata ? respond(metadata) : respond({}, 404)
+    });
+    const source = account('ua', 'preview-token');
+    const resolve = variantId => source.resolve({ itemId: 'film', variantId: variantId, positionTicks: '0' }, fixture.host);
+    return resolve(variants[0]).then(result => {
+        const preview = result.trickplay;
+        check(preview.width === 256 && preview.height === 144 && preview.columns === 4 && preview.rows === 3
+            && preview.count === 25 && preview.intervalMs === 1000, 'nearest valid tile geometry is selected');
+        check(preview.urlTemplate === 'https://media.example/jf/Videos/film/Trickplay/256/{index}.jpg?MediaSourceId=selected%20%2F%2B%3F',
+            'the sheet template escapes and binds the selected media source');
+        check(preview.headers.Authorization === result.headers.Authorization && preview.urlTemplate.indexOf('preview-token') < 0,
+            'sheets use account-scoped playback authorization without URL credentials');
+        return resolve('missing');
+    }).then(result => {
+        check(result.trickplay === undefined && result.playMethod === 'DirectPlay',
+            'an absent selected map never borrows another edition and does not fail playback');
+        metadata = null;
+        return resolve('other');
+    }).then(result => check(result.trickplay === undefined && result.playMethod === 'DirectPlay',
+        'unavailable preview metadata does not fail playback'));
+}
+
 export function run() {
     step = 'inherited artwork owners';
     const inherited = { Id: 'episode', Type: 'Episode', SeriesId: 'series',
@@ -295,7 +328,7 @@ export function run() {
     });
 
     step = 'browse';
-    return extensionCompatibility().then(baselineRepairs).then(catalogueContracts)
+    return previewContracts().then(extensionCompatibility).then(baselineRepairs).then(catalogueContracts)
         .then(() => settingsContracts()).then(() => remoteContracts()).then(() => {
         step = 'browse';
         return Promise.all([a.browse({ limit: 1 }, jf.host), b.browse({ limit: 1 }, jf.host)]);

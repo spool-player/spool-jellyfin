@@ -30,9 +30,15 @@ provider settings page has been removed.
 
 Playback and protected trickplay sheets use the owning account's full
 `Authorization: MediaBrowser …` header, including the saved device identity.
-Preview URLs contain no account token. The host fetches previews on demand
-through its account-scoped artwork loader, including remote-control previews;
-it does not decode every sheet at playback start.
+Each playback result carries its own sheet `urlTemplate`, tile geometry and
+interval, bound to the exact selected media source; a missing or invalid map
+does not borrow another edition's images or fail playback. Preview URLs contain
+no account token. The host fetches and caches sheets through its native,
+account-scoped preview loader, including remote-control previews; it does not
+decode every sheet at playback start.
+
+The sheet URL and media-source selector follow Jellyfin's
+[TrickplayController](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/TrickplayController.cs).
 
 
 Optional features use exact version-one declarations, not the application version:
@@ -168,8 +174,9 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 ## Releasing
 
-Current release: **0.2.8**, retaining the authenticated playback previews,
-provider-owned sign-in capabilities and UDP-only local discovery from 0.2.7.
+Current release: **0.2.9**, binding native sprite-sheet previews to each playback's
+exact media source and account authorization, including remote-control previews.
+The API 0.2 SDK is pinned to Spool commit `10a5d028c889830d7563bbefc99158db2312b74f`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool

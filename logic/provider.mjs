@@ -153,8 +153,7 @@ export function createSource(configuration, sourceHost) {
         remoteControl: remote.remoteControl,
         describe: () => ({
             extensions: extensions,
-            artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}',
-            trickplay: server + '/Videos/{itemId}/Trickplay/{width}/{index}.jpg?MediaSourceId={variantId}'
+            artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}'
         }),
 
         // Sign-in. These run before the account exists, against `server`
@@ -328,7 +327,7 @@ export function createSource(configuration, sourceHost) {
                 return { url: url, headers: { Authorization: authorization() }, variantId: source.Id,
                     playSessionId: info.PlaySessionId || '', playMethod: playMethod,
                     container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(stream),
-                    segments: skip, trickplay: trickplay(raw, source.Id) };
+                    segments: skip, trickplay: trickplay(raw, source.Id, server, { Authorization: authorization() }) };
             });
         },
         segments: (args, host) => request(host, 'GET', '/MediaSegments/' + segment(args.itemId))
