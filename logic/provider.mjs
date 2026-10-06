@@ -9,6 +9,7 @@ import { tickInteger, wireJson } from './wire.mjs';
 import { createCatalogue } from './catalogue.mjs';
 import { createSettings } from './settings.mjs';
 import { createRemote } from './remote.mjs';
+import { createDownloads } from './downloads.mjs';
 
 const remoteCommands = ['MoveUp', 'MoveDown', 'MoveLeft', 'MoveRight', 'PageUp', 'PageDown', 'PreviousLetter',
     'NextLetter', 'Select', 'Back', 'SendKey', 'SendString', 'VolumeUp', 'VolumeDown', 'Mute', 'Unmute',
@@ -71,6 +72,7 @@ export function createSource(configuration, sourceHost) {
 
     const catalogue = createCatalogue({ request, list, userPath, segment, extensions, userId });
     const settings = createSettings({ request, userPath, extensions, userId });
+    const downloads = createDownloads({ request, userPath, userId, device, server, authorization, query, segment });
     const remote = createRemote({ request, item, userPath, userId, device, extensions, server, trickplay,
         authorization, emit: sourceHost.emit });
 
@@ -93,6 +95,7 @@ export function createSource(configuration, sourceHost) {
             if (response.status < 200 || response.status >= 300) {
                 if (response.status === 401 || response.status === 403)
                     catalogue.invalidate();
+                host.log('warn', 'Jellyfin request rejected', { status: response.status, method: method });
                 throw new Error('http_' + response.status);
             }
             return response.body ? JSON.parse(response.body) : {};
@@ -243,7 +246,8 @@ export function createSource(configuration, sourceHost) {
         dataRead: settings.dataRead,
         dataWrite: settings.dataWrite,
         dataDelete: settings.dataDelete,
-        details: (args, host) => request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: detailFields })
+        details: (args, host) => request(host, 'GET', userPath('/Items/' + segment(args.itemId)),
+            { Fields: args.videoPreviews ? detailFields : detailFields.replace(',Trickplay', '') })
             .then(raw => ({ item: item(raw) })),
         seasons: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Seasons', args),
         episodes: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Episodes', args,
@@ -271,6 +275,8 @@ export function createSource(configuration, sourceHost) {
                 headers: { Authorization: authorization() }
             });
         },
+        download: downloads.download,
+        downloadRelease: downloads.downloadRelease,
 
         resolve: (args, host) => {
             const position = tickInteger(args.positionTicks);
@@ -289,9 +295,11 @@ export function createSource(configuration, sourceHost) {
                     EnableTranscoding: true, AutoOpenLiveStream: true,
                     AllowVideoStreamCopy: !args.forceTranscode, AllowAudioStreamCopy: true
                 }));
-            // Trickplay and skip markers come from other endpoints; ask at once.
-            const details = request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: 'Trickplay' })
-                .then(raw => raw, () => null);
+            // Skip markers are useful without previews; sprite metadata is not.
+            const details = args.videoPreviews
+                ? request(host, 'GET', userPath('/Items/' + segment(args.itemId)), { Fields: 'Trickplay' })
+                    .then(raw => raw, () => null)
+                : Promise.resolve(null);
             const markers = request(host, 'GET', '/MediaSegments/' + segment(args.itemId)).then(segments, () => []);
             return Promise.all([playbackInfo, details, markers, localNetwork]).then(([info, raw, skip, local]) => {
                 if (info.ErrorCode)
@@ -324,10 +332,15 @@ export function createSource(configuration, sourceHost) {
                 } else {
                     throw new Error('selected_variant_unplayable');
                 }
+                const preview = args.videoPreviews
+                    ? trickplay(raw, source.Id, server, { Authorization: authorization() }) : undefined;
+                if (host.isLogEnabled('trace'))
+                    host.log('trace', 'Jellyfin playback preview availability',
+                        { enabled: args.videoPreviews === true, available: Boolean(preview), playMethod: playMethod });
                 return { url: url, headers: { Authorization: authorization() }, variantId: source.Id,
                     playSessionId: info.PlaySessionId || '', playMethod: playMethod,
                     container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(stream),
-                    segments: skip, trickplay: trickplay(raw, source.Id, server, { Authorization: authorization() }) };
+                    segments: skip, trickplay: preview };
             });
         },
         segments: (args, host) => request(host, 'GET', '/MediaSegments/' + segment(args.itemId))

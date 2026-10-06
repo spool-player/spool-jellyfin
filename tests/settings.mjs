@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createSource } from '../logic/provider.mjs';
+import { logging } from './host.mjs';
+const quiet = logging();
 
 function check(value, message) {
     if (!value)
@@ -45,6 +47,7 @@ function fixture(emby) {
         return documents[identity];
     }
     const host = {
+        isLogEnabled: quiet.isLogEnabled, log: quiet.log,
         http: (url, options) => {
             check(url.indexOf(prefix + '/') === 0, 'base path and protocol prefix are preserved');
             const parts = url.slice(prefix.length).split('?');

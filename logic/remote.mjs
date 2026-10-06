@@ -131,7 +131,7 @@ export function createRemote(options) {
         return options.trickplay(media, identity((raw.PlayState || {}).MediaSourceId), server,
             { Authorization: options.authorization() });
     }
-    function normalize(raw) {
+    function normalize(raw, videoPreviews) {
         const play = raw.PlayState || {};
         const media = raw.NowPlayingItem;
         const result = { state: media && identity(media.Id) ? play.IsPaused === true ? 'paused' : 'playing' : 'stopped',
@@ -139,7 +139,7 @@ export function createRemote(options) {
         if (media && identity(media.Id)) {
             result.item = item(media);
             result.runtimeTicks = knownTicks(media.RunTimeTicks);
-            result.preview = preview(raw, media);
+            result.preview = videoPreviews ? preview(raw, media) : undefined;
         }
         result.positionTicks = knownTicks(play.PositionTicks);
         if (typeof play.VolumeLevel === 'number' && Number.isFinite(play.VolumeLevel)
@@ -174,17 +174,17 @@ export function createRemote(options) {
         // Neither service promises a monotonic queue revision or command acknowledgement.
         return result;
     }
-    function hydrate(host, id, raw) {
+    function hydrate(host, id, raw, videoPreviews) {
         const media = raw.NowPlayingItem;
         if (!media || !identity(media.Id)) {
             mediaCache.delete(id);
             return Promise.resolve(raw);
         }
-        const key = String(media.Id) + ':' + String((raw.PlayState || {}).MediaSourceId || '');
+        const key = String(media.Id) + ':' + String((raw.PlayState || {}).MediaSourceId || '') + ':' + Boolean(videoPreviews);
         let cached = mediaCache.get(id);
         if (!cached || cached.key !== key) {
             cached = { key: key, pending: request(host, 'GET', userPath('/Items/') + encodeURIComponent(media.Id),
-                { Fields: emby ? 'MediaSources' : 'MediaSources,Trickplay' })
+                { Fields: !emby && videoPreviews ? 'MediaSources,Trickplay' : 'MediaSources' })
                 .then(details => String(details.Id) === String(media.Id) ? details : {}, () => ({})) };
             mediaCache.set(id, cached);
             if (mediaCache.size > 128)
@@ -194,8 +194,14 @@ export function createRemote(options) {
             NowPlayingItem: Object.assign({}, details, media)
         }));
     }
-    function state(host, id) {
-        return session(host, id).then(raw => hydrate(host, id, raw)).then(normalize);
+    function state(host, id, videoPreviews) {
+        return session(host, id).then(raw => hydrate(host, id, raw, videoPreviews)).then(raw => {
+            const result = normalize(raw, videoPreviews);
+            if (host.isLogEnabled('trace'))
+                host.log('trace', 'Jellyfin remote preview availability',
+                    { enabled: videoPreviews === true, available: Boolean(result.preview) });
+            return result;
+        });
     }
     function loadQueue(host, id, raw) {
         const pending = emby ? request(host, 'GET', '/Sessions/PlayQueue', { Id: id })
@@ -432,8 +438,8 @@ export function createRemote(options) {
                     queueEditing: 'replace', customControls: custom(raw) })) };
             });
         },
-        remoteConnect: (args, host) => state(host, targetId(args)),
-        remoteState: (args, host) => state(host, targetId(args)),
+        remoteConnect: (args, host) => state(host, targetId(args), args.videoPreviews),
+        remoteState: (args, host) => state(host, targetId(args), args.videoPreviews),
         remoteQueue: (args, host) => {
             const id = targetId(args);
             const limit = args.limit === undefined ? 50 : args.limit;

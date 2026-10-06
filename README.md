@@ -16,8 +16,9 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | `logic/wire.mjs` | Exact signed-64-bit tick request encoding |
 | `logic/settings.mjs` | Optional native preferences and application-owned DisplayPreferences documents |
 | `logic/remote.mjs` | Negotiated outbound session control and occurrence-aware remote queues |
+| `logic/downloads.mjs` | Exact-edition original files, HTTP progressive encoding and session cleanup |
 | `ui/Login.qml` | Service labels and Quick Connect operations for Spool's compiled `ServerLogin` |
-| `ui/Picker.qml` | Service command mappings for compiled item pickers and device controls |
+| `ui/Picker.qml` | Download edition selection plus compiled item pickers and device controls |
 
 Several users and several servers can be signed in at once. Users of the same server are alternatives
 to each other in Spool; different servers are shown together.
@@ -39,6 +40,58 @@ decode every sheet at playback start.
 
 The sheet URL and media-source selector follow Jellyfin's
 [TrickplayController](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/TrickplayController.cs).
+
+When `videoPreviews` is false, details omit only the `Trickplay` field, playback
+does not make its preview-only item request, and remote snapshots omit both the
+field and descriptor. Chapters, media sources, tracks, artwork and skip markers
+remain available. Remote metadata caches distinguish the preference, so turning
+previews back on can load the selected edition's sheets.
+
+## Local downloads
+
+`download({itemId, mode, variantId?, maxBitrate?, maxHeight?}, host)` returns a
+finite authenticated media resource. Multiple editions open this provider's
+edition picker; its only answer is `variantId`. An unavailable selected edition
+never falls back to another file. Downloads require the current account's
+`EnableContentDownloading` permission. Only finite local video files are accepted:
+live sources, remote media, discs, virtual items and multipart movies are rejected
+rather than silently saving an incomplete part.
+
+Original mode uses `/Videos/{itemId}/stream?static=true&MediaSourceId=...`, retaining
+the selected container and a known safe byte size. Transcoded mode separately
+negotiates `/Items/{itemId}/PlaybackInfo` with an HTTP MP4/H.264/AAC device profile,
+direct play/stream and video/audio stream copying disabled. Bitrate defaults to
+8 Mbit/s unless explicitly selected; explicit height and bitrate ceilings are
+sent to the server, which can also impose its own account/network limits.
+The height constraint is paired with a source-aspect width constraint because
+Jellyfin's bitrate resolution normalizer discards a height-only limit. If source
+dimensions are unknown, an explicit height request fails rather than being ignored.
+Both video and audio encoding permissions are required. A server that cannot
+negotiate genuine progressive output reports `download_transcode_unavailable`;
+an HLS/DASH playlist or copy-only result is never returned as a download.
+
+The negotiated `/Videos/{itemId}/stream.mp4` HTTP response is the complete growing
+progressive file, with unknown encoded size. Authentication stays in the account's
+authorization header; generated query credentials are removed and foreign-origin
+URLs rejected. Each download has its own server-issued `PlaySessionId`, unrelated
+to active playback or watched-state reports. The opaque cleanup record contains
+only account/device/session identities. `downloadRelease` calls
+`DELETE /Videos/ActiveEncodings` with both device and session on completion,
+failure or cancellation; it never stops another download or the player's session.
+
+These choices follow Jellyfin's
+[progressive VideosController](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/VideosController.cs),
+[device negotiation](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Helpers/MediaInfoHelper.cs)
+and [session-scoped encoding cleanup](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/HlsSegmentController.cs).
+
+## Diagnostics
+
+The final API 0.2 host provides `log` and `isLogEnabled` directly. Trace logging
+reports local/remote preview availability and download negotiation choices;
+debug records download protocol outcomes and encoding release; warnings identify
+HTTP status failures without including account names, tokens, URLs or raw server
+payloads. Trace is opt-in through `spool.provider.trace`; expensive diagnostic
+fields are constructed only when enabled.
 
 
 Optional features use exact version-one declarations, not the application version:
@@ -169,14 +222,25 @@ python3 sdk/spool-provider.py validate "dist/spool.jellyfin-$VERSION.tar.zst"
 ```
 
 `tests/contract.mjs` runs the provider against a scripted server in Qt's JS engine, the one Spool uses.
+Download contracts cover ambiguous/selected editions, HTTP encoding quality,
+separate cleanup sessions, HLS/copy/foreign-origin rejection, permissions and
+non-finite/multipart rejection. Preview contracts cover disabled metadata and
+remote cache transitions. Fixture hosts use the same logging contract as production.
+
+For an actual transport/codec smoke against a disposable Jellyfin server with one
+generated movie, use `node tools/download-smoke.mjs /private/path/account.json`
+with `ffprobe` on PATH. The private JSON contains `server`, `userId` and `token`;
+the tool never prints credentials or URLs. It transfers both modes, checks complete
+media and original byte size, verifies H.264/AAC at the requested height, and releases
+the generated encoding even when a transfer/probe fails.
 To try a checkout in Spool without releasing it, configure Spool with
 `-DSPOOL_PROVIDER_OVERRIDES=spool.jellyfin=/path/to/spool-jellyfin`.
 
 ## Releasing
 
-Current release: **0.2.9**, binding native sprite-sheet previews to each playback's
-exact media source and account authorization, including remote-control previews.
-The API 0.2 SDK is pinned to Spool commit `10a5d028c889830d7563bbefc99158db2312b74f`.
+Prepared release: **0.2.10**, adding original and server-encoded local downloads,
+global preview-request gating and provider diagnostics.
+The API 0.2 SDK is pinned to Spool commit `466e95ab3b1bc01036804f35bac80bad5efe9e22`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool

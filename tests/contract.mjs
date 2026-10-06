@@ -11,6 +11,9 @@ import { item } from '../logic/items.mjs';
 import { catalogueContracts } from './catalogue.mjs';
 import { settingsContracts } from './settings.mjs';
 import { remoteContracts } from './remote.mjs';
+import { logging } from './host.mjs';
+import { downloadContracts } from './downloads.mjs';
+const quiet = logging();
 
 let step = 'start';
 function check(value, message) {
@@ -37,6 +40,7 @@ function server(routes) {
         calls: calls,
         speedTests: speedTests,
         host: {
+            isLogEnabled: quiet.isLogEnabled, log: quiet.log,
             device: device, delay: never,
             speedTest: options => {
                 speedTests.push(options);
@@ -244,7 +248,8 @@ function previewContracts() {
         'GET /Users/ua/Items/film': () => metadata ? respond(metadata) : respond({}, 404)
     });
     const source = account('ua', 'preview-token');
-    const resolve = variantId => source.resolve({ itemId: 'film', variantId: variantId, positionTicks: '0' }, fixture.host);
+    const resolve = variantId => source.resolve({ itemId: 'film', variantId: variantId, positionTicks: '0',
+        videoPreviews: true }, fixture.host);
     return resolve(variants[0]).then(result => {
         const preview = result.trickplay;
         check(preview.width === 256 && preview.height === 144 && preview.columns === 4 && preview.rows === 3
@@ -259,8 +264,23 @@ function previewContracts() {
             'an absent selected map never borrows another edition and does not fail playback');
         metadata = null;
         return resolve('other');
-    }).then(result => check(result.trickplay === undefined && result.playMethod === 'DirectPlay',
-        'unavailable preview metadata does not fail playback'));
+    }).then(result => {
+        check(result.trickplay === undefined && result.playMethod === 'DirectPlay',
+            'unavailable preview metadata does not fail playback');
+        const before = fixture.calls.length;
+        return source.resolve({ itemId: 'film', variantId: 'other', positionTicks: '0', videoPreviews: false },
+            fixture.host).then(result => {
+            const calls = fixture.calls.slice(before);
+            check(result.trickplay === undefined && !calls.some(call => call.path === '/Users/ua/Items/film'),
+                'disabled previews skip preview-only metadata without skipping playback');
+            metadata = { Id: 'film', MediaSources: [{ Id: 'other' }] };
+            return source.details({ itemId: 'film', videoPreviews: false }, fixture.host);
+        }).then(() => {
+            const url = fixture.calls[fixture.calls.length - 1].url;
+            check(url.indexOf('Trickplay') < 0 && url.indexOf('MediaSources') >= 0,
+                'disabled details retain media sources but omit preview-only fields');
+        });
+    });
 }
 
 export function run() {
@@ -328,7 +348,7 @@ export function run() {
     });
 
     step = 'browse';
-    return previewContracts().then(extensionCompatibility).then(baselineRepairs).then(catalogueContracts)
+    return previewContracts().then(() => downloadContracts()).then(extensionCompatibility).then(baselineRepairs).then(catalogueContracts)
         .then(() => settingsContracts()).then(() => remoteContracts()).then(() => {
         step = 'browse';
         return Promise.all([a.browse({ limit: 1 }, jf.host), b.browse({ limit: 1 }, jf.host)]);
@@ -520,7 +540,8 @@ export function run() {
             check(url.indexOf('is3D') < 0 && url.indexOf('NameLessThan=A') > 0 && url.indexOf('SortBy=DateCreated') > 0,
                 'unset filters stay off, # is before A');
             step = 'errors';
-            return fails(() => a.libraries({}, { device: device, http: () => respond({}, 401) }), 'http_401');
+            return fails(() => a.libraries({}, { device: device, isLogEnabled: quiet.isLogEnabled, log: quiet.log,
+                http: () => respond({}, 401) }), 'http_401');
         }).then(() => {
             step = 'sign in';
             const login = createSource({}, { device: device });

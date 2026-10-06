@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { createSource } from '../logic/provider.mjs';
+import { logging } from './host.mjs';
+const quiet = logging();
 
 const extensions = { 'spool.suggestions': 1, 'spool.item-actions': 1,
     'spool.collection-editing': 1, 'spool.playback-queue-reporting': 1 };
@@ -42,6 +44,7 @@ export function catalogueContracts() {
     const sockets = [];
     let searchPending = [];
     const host = {
+        isLogEnabled: quiet.isLogEnabled, log: quiet.log,
         device: { id: 'device' }, extensions: extensions, emit: () => {}, delay: () => new Promise(() => {}),
         socket: () => {
             const socket = { send: () => {}, close: () => {} };

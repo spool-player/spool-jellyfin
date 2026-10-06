@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
+import { logging } from './host.mjs';
 import { createSource } from '../logic/provider.mjs';
+const quiet = logging();
 
 function check(value, message) {
     if (!value)
@@ -62,6 +64,7 @@ export function remoteContracts(emby = false) {
         return raw;
     }
     const host = {
+        isLogEnabled: quiet.isLogEnabled, log: quiet.log,
         device: { id: 'self', name: 'Controller' }, extensions: { 'spool.remote-targets': 1 },
         emit: (name, data) => events.push({ name: name, data: data }),
         delay: () => Promise.resolve(),
@@ -145,7 +148,7 @@ export function remoteContracts(emby = false) {
         check(result.targets.length === 1 && result.targets[0].id === 'target', 'exclude self and the other service capability shape');
         check(result.targets[0].queueEditing === 'replace' && result.targets[0].customControls, 'replacement editing and advanced navigation offered');
         before = mutationCalls().length;
-        return source.remoteConnect({ targetId: 'target' }, host);
+        return source.remoteConnect({ targetId: 'target', videoPreviews: true }, host);
     }).then(state => {
         check(mutationCalls().length === before, 'selection never starts or transfers media');
         check(state.state === 'paused' && state.positionTicks === '9007199254740993', 'snapshot preserves known exact position');
@@ -159,7 +162,18 @@ export function remoteContracts(emby = false) {
             check(state.preview.urlTemplate.indexOf('api_key=') < 0
                 && state.preview.headers.Authorization.indexOf('Token="account-token"') >= 0,
                 'protected remote previews use account authorization without query credentials');
-        return source.remoteQueue({ targetId: 'target', limit: 2 }, host);
+        const previewBefore = calls.length;
+        return source.remoteState({ targetId: 'target', videoPreviews: false }, host).then(disabled => {
+            check(disabled.preview === undefined && disabled.audioTracks.length === 1 && disabled.subtitleTracks.length === 1,
+                'disabled remote previews retain useful stream tracks');
+            check(calls.slice(previewBefore).filter(call => call.path === '/Users/u/Items/film')
+                .every(call => call.query.Fields.indexOf('Trickplay') < 0),
+                'turning previews off does not hydrate preview-only metadata');
+            return source.remoteState({ targetId: 'target', videoPreviews: true }, host);
+        }).then(enabled => {
+            check(emby || enabled.preview, 're-enabling previews refreshes the selected source metadata');
+            return source.remoteQueue({ targetId: 'target', limit: 2 }, host);
+        });
     }).then(page => {
         check(page.items.map(row => row.id).join(',') === 'film,film'
             && page.items.map(row => row.entryId).join(',') === '0,second', 'duplicate media occurrences retain distinct string entry IDs');
