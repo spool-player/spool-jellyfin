@@ -96,12 +96,11 @@ fields are constructed only when enabled.
 
 Optional features use exact version-one declarations, not the application version:
 `spool.artwork-owners` preserves inherited thumbnail/backdrop owners and
-`spool.speed-test` enables native throughput probes. On API 0.2 hosts without these
-extensions, baseline login, browsing, playback and reporting remain available.
-Inherited thumbnail/backdrop tags are omitted while own images and baseline
-series/album poster fallbacks remain. Speed testing is not a legacy capability.
-Compiled login and item pickers use the context's `missingHostExtensions` to show
-“Update Spool to use all features of this provider.” when optional host support is missing.
+`spool.speed-test` enables native throughput probes. Feature availability comes
+from exact host/account negotiation, not application version strings. Inherited
+thumbnail/backdrop tags require owner support; own artwork and ordinary
+series/album fallbacks remain available without it. Current provider builds require
+the current Spool host contract, including native logging; older hosts are not supported.
 
 The version-one `spool.suggestions`, `spool.item-actions`,
 `spool.collection-editing` and `spool.playback-queue-reporting` extensions add
