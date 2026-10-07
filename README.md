@@ -242,8 +242,9 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 ## Releasing
 
-Prepared release: **0.2.10**, adding original and server-encoded local downloads,
-global preview-request gating and provider diagnostics.
+Prepared profile-UX release: **0.2.12**, adding saved-server profile/reauthentication
+context without sharing viewer sessions. Publish only with the reviewed profile-UX
+host whose shared login supports this context; canonical 0.2.11 remains independent.
 The format-3 SDK is pinned to Spool commit `6185eaa895f2df9b9fcb56c39a1eae35447595b5`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,

@@ -2,7 +2,7 @@
   "format": 3,
   "id": "spool.jellyfin",
   "name": "Jellyfin",
-  "version": "0.2.11",
+  "version": "0.2.12",
   "publisher": "Spool",
   "summary": "Your Jellyfin server",
   "homepage": "https://github.com/spool-player/spool-jellyfin",
