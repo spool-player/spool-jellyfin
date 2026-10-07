@@ -239,7 +239,7 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 Prepared release: **0.2.10**, adding original and server-encoded local downloads,
 global preview-request gating and provider diagnostics.
-The format-3 SDK is pinned to Spool commit `f01342b6dc45e070d0dc9a89a21a889d4204bfd8`.
+The format-3 SDK is pinned to Spool commit `6185eaa895f2df9b9fcb56c39a1eae35447595b5`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool
