@@ -65,7 +65,7 @@ export function remoteContracts(emby = false) {
     }
     const host = {
         isLogEnabled: quiet.isLogEnabled, log: quiet.log,
-        device: { id: 'self', name: 'Controller' }, extensions: { 'spool.remote-targets': 1 },
+        device: { id: 'self', name: 'Controller' }, capabilities: { 'remoteTargets': true },
         emit: (name, data) => events.push({ name: name, data: data }),
         delay: () => Promise.resolve(),
         socket: () => {
@@ -254,12 +254,12 @@ export function remoteContracts(emby = false) {
         }).then(() => {
             const legacy = createSource(configuration, { device: {} });
             before = calls.length;
-            return fails(() => legacy.remoteTargets({}, host), 'unsupported_extension')
-                .then(() => fails(() => legacy.remoteConnect({ targetId: 'target' }, host), 'unsupported_extension'))
-                .then(() => fails(() => legacy.remoteState({ targetId: 'target' }, host), 'unsupported_extension'))
-                .then(() => fails(() => legacy.remoteQueue({ targetId: 'target' }, host), 'unsupported_extension'))
-                .then(() => fails(() => legacy.remoteCommand({ targetId: 'target', command: { action: 'pause' } }, host), 'unsupported_extension'))
-                .then(() => fails(() => legacy.remoteControls({ targetId: 'target' }, host), 'unsupported_extension'))
-                .then(() => fails(() => legacy.remoteControl({ targetId: 'target', name: 'MoveUp' }, host), 'unsupported_extension'));
+            return fails(() => legacy.remoteTargets({}, host), 'unsupported_capability')
+                .then(() => fails(() => legacy.remoteConnect({ targetId: 'target' }, host), 'unsupported_capability'))
+                .then(() => fails(() => legacy.remoteState({ targetId: 'target' }, host), 'unsupported_capability'))
+                .then(() => fails(() => legacy.remoteQueue({ targetId: 'target' }, host), 'unsupported_capability'))
+                .then(() => fails(() => legacy.remoteCommand({ targetId: 'target', command: { action: 'pause' } }, host), 'unsupported_capability'))
+                .then(() => fails(() => legacy.remoteControls({ targetId: 'target' }, host), 'unsupported_capability'))
+                .then(() => fails(() => legacy.remoteControl({ targetId: 'target', name: 'MoveUp' }, host), 'unsupported_capability'));
         }).then(() => check(calls.length === before, 'all outbound extension methods reject legacy hosts without HTTP'));
 }

@@ -7,7 +7,7 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 
 | | |
 | --- | --- |
-| `manifest.json` | Identity, capabilities, screens and item actions (provider API 0.2) |
+| `manifest.json` | Identity, capabilities, screens and item actions (package format 3) |
 | `logic/provider.mjs` | Sign-in, catalogue, playback, bandwidth endpoint, item actions, SyncPlay |
 | `logic/items.mjs` | Jellyfin JSON to Spool's item shape |
 | `logic/profile.mjs` | The DeviceProfile sent with every playback request |
@@ -86,7 +86,7 @@ and [session-scoped encoding cleanup](https://github.com/jellyfin/jellyfin/blob/
 
 ## Diagnostics
 
-The final API 0.2 host provides `log` and `isLogEnabled` directly. Trace logging
+The final current format-3 host provides `log` and `isLogEnabled` directly. Trace logging
 reports local/remote preview availability and download negotiation choices;
 debug records download protocol outcomes and encoding release; warnings identify
 HTTP status failures without including account names, tokens, URLs or raw server
@@ -94,16 +94,16 @@ payloads. Trace is opt-in through `spool.provider.trace`; expensive diagnostic
 fields are constructed only when enabled.
 
 
-Optional features use exact version-one declarations, not the application version:
-`spool.artwork-owners` preserves inherited thumbnail/backdrop owners and
-`spool.speed-test` enables native throughput probes. Feature availability comes
+Optional features use exact boolean declarations, not the application version:
+`artworkOwners` preserves inherited thumbnail/backdrop owners and
+`speedTest` enables native throughput probes. Feature availability comes
 from exact host/account negotiation, not application version strings. Inherited
 thumbnail/backdrop tags require owner support; own artwork and ordinary
 series/album fallbacks remain available without it. Current provider builds require
 the current Spool host contract, including native logging; older hosts are not supported.
 
-The version-one `spool.suggestions`, `spool.item-actions`,
-`spool.collection-editing` and `spool.playback-queue-reporting` extensions add
+The boolean `suggestions`, `itemActions`,
+`collectionEditing` and `playbackQueueReporting` capabilities add
 bounded server suggestions, permission-aware menus, occurrence-aware playlist
 editing and native NowPlayingQueue reporting. Search runs dedicated Series and
 mixed-type queries concurrently, prioritizes Series, deduplicates and returns a
@@ -120,7 +120,7 @@ collections permit membership removal but not reordering. Start/progress reports
 reuse a source-owned queue snapshot, preserving duplicates; stop reports are
 unchanged. Backend permission failures are not host-upgrade notices.
 
-`spool.remote-targets` adds outbound control independently of inbound remote
+`remoteTargets` adds outbound control independently of inbound remote
 commands and SyncPlay. Discovery asks `/Sessions?controllableByUserId=...`, checks
 the session's nested media-control capabilities and excludes this installation.
 Selecting a device only reads state. Unknown duration/volume and nonexistent
@@ -145,14 +145,14 @@ Protocol fixtures and loopback exercises are not a claim of live-client support
 for every command: the peer's advertised capabilities and server authorization
 remain authoritative.
 
-`spool.playback-preferences` exposes the signed-in user's audio/subtitle languages,
+`playbackPreferences` exposes the signed-in user's audio/subtitle languages,
 Default/Smart audio mode and Default/Smart/OnlyForced/Always/None subtitle mode.
 Every write fetches current `Configuration` and `Policy`, respects
 `EnableUserPreferenceAccess`, and posts only the four mapped changes merged into
 the full configuration. It never writes administrator policy. Unknown or missing
 enum values remain read-only; two-letter language normalization belongs to Spool.
 
-`spool.settings-storage` uses one canonical lowercase UUID DisplayPreferences
+`settingsStorage` uses one canonical lowercase UUID DisplayPreferences
 record per document and signed-in user, partitioned by client `Spool`. Only
 `CustomPrefs["spool.data.v1"]` contains application JSON; unrelated DTO fields and
 CustomPrefs survive writes/deletes. Jellyfin GET and POST both send `userId` and
@@ -170,7 +170,7 @@ Their stateful protocol fixtures cover preservation, per-account/document
 isolation, complete enum round-trips, policy denial, null/absence, conditional
 rejection and document size/depth/corruption boundaries.
 
-The `spool.speed-test` extension lets Spool measure each account's route using Jellyfin's authenticated
+The `speedTest` capability lets Spool measure each account's route using Jellyfin's authenticated
 `/Playback/BitrateTest?size={bytes}&_={nonce}` endpoint. The provider preserves the server's reverse-proxy
 base path and sends the account token in the authorization header, not the URL. Spool's native host
 performs the streaming benchmark and chooses the bitrate and number of parallel requests.
@@ -239,7 +239,7 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 Prepared release: **0.2.10**, adding original and server-encoded local downloads,
 global preview-request gating and provider diagnostics.
-The API 0.2 SDK is pinned to Spool commit `466e95ab3b1bc01036804f35bac80bad5efe9e22`.
+The format-3 SDK is pinned to Spool commit `f01342b6dc45e070d0dc9a89a21a889d4204bfd8`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool

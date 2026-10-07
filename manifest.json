@@ -1,29 +1,77 @@
 {
-  "format": 2,
-  "api": "0.2",
+  "format": 3,
   "id": "spool.jellyfin",
   "name": "Jellyfin",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "publisher": "Spool",
   "summary": "Your Jellyfin server",
   "homepage": "https://github.com/spool-player/spool-jellyfin",
   "icon": "assets/icon.svg",
   "entry": "logic/provider.mjs",
-  "capabilities": ["search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery",
-    "groupPlayback", "remoteControl", "downloads", "downloadTranscode"],
-  "extensions": {"spool.artwork-owners": 1, "spool.speed-test": 1,
-    "spool.suggestions": 1, "spool.item-actions": 1, "spool.collection-editing": 1,
-    "spool.playback-queue-reporting": 1, "spool.playback-preferences": 1, "spool.settings-storage": 1,
-    "spool.remote-targets": 1},
+  "capabilities": [
+    "search",
+    "userState",
+    "reporting",
+    "segments",
+    "streamQuality",
+    "trickplay",
+    "discovery",
+    "groupPlayback",
+    "remoteControl",
+    "downloads",
+    "downloadTranscode",
+    "artworkOwners",
+    "speedTest",
+    "suggestions",
+    "itemActions",
+    "collectionEditing",
+    "playbackQueueReporting",
+    "playbackPreferences",
+    "settingsStorage",
+    "remoteTargets"
+  ],
   "ui": {
     "login": "ui/Login.qml",
     "picker": "ui/Picker.qml"
   },
   "actions": [
-    {"id": "playlist", "label": "Add to playlist", "icon": "playlist_add",
-      "types": ["Movie", "Episode", "Series", "Season", "Audio", "MusicAlbum", "MusicVideo", "Video"]},
-    {"id": "collection", "label": "Add to collection", "icon": "library_add", "types": ["Movie", "Series"]},
-    {"id": "rename", "label": "Rename", "icon": "drive_file_rename_outline", "types": ["Playlist", "BoxSet"]},
-    {"id": "delete", "label": "Delete from server", "icon": "delete"}
+    {
+      "id": "playlist",
+      "label": "Add to playlist",
+      "icon": "playlist_add",
+      "types": [
+        "Movie",
+        "Episode",
+        "Series",
+        "Season",
+        "Audio",
+        "MusicAlbum",
+        "MusicVideo",
+        "Video"
+      ]
+    },
+    {
+      "id": "collection",
+      "label": "Add to collection",
+      "icon": "library_add",
+      "types": [
+        "Movie",
+        "Series"
+      ]
+    },
+    {
+      "id": "rename",
+      "label": "Rename",
+      "icon": "drive_file_rename_outline",
+      "types": [
+        "Playlist",
+        "BoxSet"
+      ]
+    },
+    {
+      "id": "delete",
+      "label": "Delete from server",
+      "icon": "delete"
+    }
   ]
 }
