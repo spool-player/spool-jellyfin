@@ -60,37 +60,34 @@ function server(routes) {
     };
 }
 
-function account(user, token, extensions) {
+function account(user, token, capabilities) {
     const host = { device: device };
-    if (extensions !== undefined)
-        host.extensions = extensions;
+    if (capabilities !== undefined)
+        host.capabilities = capabilities;
     return createSource({ server: 'https://media.example/jf', userId: user, token: token }, host);
 }
 
-function extensionCompatibility() {
-    step = 'optional extensions and legacy artwork';
-    const declared = { 'spool.artwork-owners': 1, 'spool.speed-test': 1,
-        'spool.suggestions': 1, 'spool.item-actions': 1, 'spool.collection-editing': 1,
-        'spool.playback-queue-reporting': 1, 'spool.playback-preferences': 1, 'spool.settings-storage': 1,
-        'spool.remote-targets': 1 };
+function capabilityAvailability() {
+    step = 'optional capabilities and legacy artwork';
+    const declared = { 'artworkOwners': true, 'speedTest': true,
+        'suggestions': true, 'itemActions': true, 'collectionEditing': true,
+        'playbackQueueReporting': true, 'playbackPreferences': true, 'settingsStorage': true,
+        'remoteTargets': true };
     const legacy = account('ua', 'token');
     const current = account('ua', 'token', declared);
-    const wrong = account('ua', 'token', { 'spool.artwork-owners': 2, 'spool.speed-test': '1', 'future.feature': 1 });
-    check(Object.keys(legacy.describe().extensions).length === 0
-        && Object.keys(declared).every(id => legacy.extensionStatus().missingHost.indexOf(id) >= 0),
-        'absent host extensions require an update regardless of device version');
-    check(Object.keys(wrong.extensionStatus().enabled).length === 0, 'only exact supported wire majors enable features');
-    check(current.describe().extensions['spool.artwork-owners'] === 1
-        && current.extensionStatus().enabled['spool.speed-test'] === 1
-        && current.extensionStatus().missingHost.length === 0, 'supported declarations become account offers');
+    const wrong = account('ua', 'token', { 'artworkOwners': 2, 'speedTest': '1', 'future.feature': 1 });
+    check(Object.keys(legacy.describe().capabilities).length === 0, 'absent declarations disable optional operations');
+    check(Object.keys(wrong.describe().capabilities).length === 0, 'non-boolean declarations do not enable features');
+    check(current.describe().capabilities.artworkOwners === true
+        && current.describe().capabilities.speedTest === true, 'boolean declarations become account offers');
     const raw = { Id: 'episode', Type: 'Episode', SeriesId: 'series', SeriesPrimaryImageTag: 'series-poster',
         AlbumId: 'album', AlbumPrimaryImageTag: 'album-poster', ImageTags: { Primary: 'own-poster' },
         ParentThumbItemId: 'season', ParentThumbImageTag: 'parent-thumb',
         ParentBackdropItemId: 'series', ParentBackdropImageTags: ['parent-backdrop'] };
     const fixture = server({ 'GET /Items': { Items: [raw], TotalRecordCount: 1 },
         'GET /Users/ua/Items/episode': raw });
-    return fails(() => legacy.speedTest({}, fixture.host), 'unsupported_extension')
-        .then(() => fails(() => wrong.speedTest({}, fixture.host), 'unsupported_extension')).then(() => {
+    return fails(() => legacy.speedTest({}, fixture.host), 'unsupported_capability')
+        .then(() => fails(() => wrong.speedTest({}, fixture.host), 'unsupported_capability')).then(() => {
             check(fixture.calls.length === 0 && fixture.speedTests.length === 0,
                 'unsupported speed tests fail before HTTP or native probes');
             return Promise.all([legacy.browse({ limit: 5 }, fixture.host), current.browse({ limit: 5 }, fixture.host),
@@ -348,7 +345,7 @@ export function run() {
     });
 
     step = 'browse';
-    return previewContracts().then(() => downloadContracts()).then(extensionCompatibility).then(baselineRepairs).then(catalogueContracts)
+    return previewContracts().then(() => downloadContracts()).then(capabilityAvailability).then(baselineRepairs).then(catalogueContracts)
         .then(() => settingsContracts()).then(() => remoteContracts()).then(() => {
         step = 'browse';
         return Promise.all([a.browse({ limit: 1 }, jf.host), b.browse({ limit: 1 }, jf.host)]);
@@ -370,9 +367,9 @@ export function run() {
         }).then(() => {
             step = 'speed test endpoint';
             const nested = createSource({ server: 'https://media.example/proxy/jellyfin///',
-                userId: 'ua', token: 'token-a' }, { device: device, extensions: { 'spool.speed-test': 1 } });
-            return Promise.all([account('ua', 'token-a', { 'spool.speed-test': 1 }).speedTest({}, jf.host),
-                account('ub', 'token-b', { 'spool.speed-test': 1 }).speedTest({}, jf.host), nested.speedTest({}, jf.host)]);
+                userId: 'ua', token: 'token-a' }, { device: device, capabilities: { 'speedTest': true } });
+            return Promise.all([account('ua', 'token-a', { 'speedTest': true }).speedTest({}, jf.host),
+                account('ub', 'token-b', { 'speedTest': true }).speedTest({}, jf.host), nested.speedTest({}, jf.host)]);
         }).then(() => {
             const first = jf.speedTests[0];
             check(first.url.replace('{bytes}', '524288').replace('{nonce}', 'warmup-1')

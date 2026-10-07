@@ -55,25 +55,22 @@ export function createSource(configuration, sourceHost) {
     let token = configuration.token || '';
     let userId = configuration.userId || '';
 
-    const declared = ['spool.artwork-owners', 'spool.speed-test',
-        'spool.suggestions', 'spool.item-actions', 'spool.collection-editing', 'spool.playback-queue-reporting',
-        'spool.playback-preferences', 'spool.settings-storage', 'spool.remote-targets'];
-    const extensions = {};
+    const declared = ["search", "userState", "reporting", "segments", "streamQuality", "trickplay", "discovery", "groupPlayback", "remoteControl", "downloads", "downloadTranscode", "artworkOwners", "speedTest", "suggestions", "itemActions", "collectionEditing", "playbackQueueReporting", "playbackPreferences", "settingsStorage", "remoteTargets"];
+    const capabilities = {};
     for (const id of declared) {
-        if (sourceHost.extensions && sourceHost.extensions[id] === 1)
-            extensions[id] = 1;
+        if (sourceHost.capabilities && sourceHost.capabilities[id] === true)
+            capabilities[id] = true;
     }
-    Object.freeze(extensions);
-    const missingHost = declared.filter(id => !extensions[id]);
-    const features = Object.freeze({ artworkOwners: extensions['spool.artwork-owners'] === 1 });
+    Object.freeze(capabilities);
+    const features = Object.freeze({ artworkOwners: capabilities['artworkOwners'] === true });
     const item = raw => mapItem(raw, features);
     const page = (result, first, limit) => mapPage(result, first, limit, features);
     const userPath = path => '/Users/' + segment(userId) + path;
 
-    const catalogue = createCatalogue({ request, list, userPath, segment, extensions, userId });
-    const settings = createSettings({ request, userPath, extensions, userId });
+    const catalogue = createCatalogue({ request, list, userPath, segment, capabilities, userId });
+    const settings = createSettings({ request, userPath, capabilities, userId });
     const downloads = createDownloads({ request, userPath, userId, device, server, authorization, query, segment });
-    const remote = createRemote({ request, item, userPath, userId, device, extensions, server, trickplay,
+    const remote = createRemote({ request, item, userPath, userId, device, capabilities, server, trickplay,
         authorization, emit: sourceHost.emit });
 
     function authorization(overrideToken) {
@@ -131,7 +128,7 @@ export function createSource(configuration, sourceHost) {
     if (server && token && sourceHost.socket) {
         const socketUrl = server.replace(/^http/i, 'ws') + '/socket?' + query({ api_key: token, deviceId: device.id });
         disconnect = connect(sourceHost, socketUrl, { Authorization: authorization() }, catalogue.invalidate,
-            extensions['spool.remote-targets'] === 1);
+            capabilities['remoteTargets'] === true);
         // Tell the server what this client can be asked to do.
         sourceHost.http(server + '/Sessions/Capabilities/Full', {
             method: 'POST',
@@ -146,7 +143,6 @@ export function createSource(configuration, sourceHost) {
     }
 
     return {
-        extensionStatus: () => ({ enabled: extensions, missingHost: missingHost }),
         remoteTargets: remote.remoteTargets,
         remoteConnect: remote.remoteConnect,
         remoteState: remote.remoteState,
@@ -155,7 +151,7 @@ export function createSource(configuration, sourceHost) {
         remoteControls: remote.remoteControls,
         remoteControl: remote.remoteControl,
         describe: () => ({
-            extensions: extensions,
+            capabilities: capabilities,
             artwork: server + '/Items/{itemId}/Images/{type}?tag={tag}&maxWidth={width}&quality={quality}&format={format}'
         }),
 
@@ -268,8 +264,8 @@ export function createSource(configuration, sourceHost) {
             tags: result.Tags || []
         })),
         speedTest: (args, host) => {
-            if (extensions['spool.speed-test'] !== 1)
-                throw new Error('unsupported_extension');
+            if (capabilities['speedTest'] !== true)
+                throw new Error('unsupported_capability');
             return host.speedTest({
                 url: server + '/Playback/BitrateTest?size={bytes}&_={nonce}',
                 headers: { Authorization: authorization() }
