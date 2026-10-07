@@ -20,8 +20,10 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | `ui/Login.qml` | Service labels and Quick Connect operations for Spool's compiled `ServerLogin` |
 | `ui/Picker.qml` | Download edition selection plus compiled item pickers and device controls |
 
-Several users and several servers can be signed in at once. Users of the same server are alternatives
-to each other in Spool; different servers are shown together.
+Several users and several servers can be signed in at once. Each account's group is its server ID,
+so users of the same server form one Spool profile set: one of them watches at a time, the set has its
+own startup choice (always this user, or ask at startup), and different servers are shown together.
+Jellyfin has no Home/PIN activation, so switching users of a server reuses each user's saved session.
 
 Generic login, server identity, item-action and device-control layouts are precompiled
 into Spool, not shipped as duplicate provider screens. Use this provider with the
