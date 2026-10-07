@@ -35,12 +35,15 @@ const never = () => new Promise(() => {});
 // A server keyed by "METHOD path", recording every request.
 function server(routes) {
     const calls = [];
+    const events = [];
     const speedTests = [];
     return {
         calls: calls,
+        events: events,
         speedTests: speedTests,
         host: {
             isLogEnabled: quiet.isLogEnabled, log: quiet.log,
+            emit: (type, payload) => events.push([type, payload]),
             device: device, delay: never,
             speedTest: options => {
                 speedTests.push(options);
@@ -225,7 +228,9 @@ function baselineRepairs() {
                     'failed, malformed or unsupported availability is retryable');
                 check(info.users[0].id === 'u1', 'availability failures do not hide password users');
                 return login.authenticate({ server: info.server, username: 'Ann', password: 'right' }, setup.host);
-            }).then(account => check(account.configuration.token === 'new-token', 'password sign-in remains usable'));
+            }).then(account => check(!account.configuration
+                && setup.events.find(event => event[0] === 'configuration')[1].token === 'new-token',
+                'password sign-in persists its private session without returning it to QML'));
         }
         return sequence;
     });
@@ -560,10 +565,11 @@ export function run() {
                 .then(result => {
                     check(result.account === 'u1@server-id' && result.group === 'server-id', 'account identity');
                     check(result.label === 'Ann' && result.detail === 'Home', 'account label');
-                    check(result.configuration.token === 'new-token'
-                        && result.configuration.server === 'http://jf.local:8096', 'configuration');
+                    const privateConfiguration = setup.events.find(event => event[0] === 'configuration')[1];
+                    check(!result.configuration && privateConfiguration.token === 'new-token'
+                        && privateConfiguration.server === 'http://jf.local:8096', 'private draft configuration');
                     const secondLogin = createSource({setupContext: {purpose: 'addProfile'},
-                        setupAccount: result.configuration}, {device: device});
+                        setupAccount: privateConfiguration}, {device: device});
                     check(secondLogin.setupContext().server === 'http://jf.local:8096',
                         'adding another viewer prefills the saved server without returning its session');
                     const nested = createSource({setupAccount: {server: 'https://media.example/proxy/jellyfin/', token: 'private'}},
@@ -577,13 +583,14 @@ export function run() {
                     });
                     return secondLogin.authenticate({server: secondLogin.setupContext().server, username: 'Ben', password: 'right'},
                         other.host).then(viewer => {
-                            check(viewer.group === result.group && viewer.account !== result.account
-                                && viewer.configuration.userId === 'u2' && viewer.configuration.token === 'other-token',
+                            const privateViewer = other.events.find(event => event[0] === 'configuration')[1];
+                            check(viewer.group === result.group && viewer.account !== result.account && !viewer.configuration
+                                && privateViewer.userId === 'u2' && privateViewer.token === 'other-token',
                                 'a second viewer shares only server grouping, not identity or session permission');
                             check(other.calls.every(call => !call.options.headers.Authorization.includes('new-token')),
                                 'adding a viewer never authenticates with the saved viewer token');
                             const reconnect = createSource({setupContext: {purpose: 'reconnect'},
-                                setupAccount: result.configuration}, {device: device});
+                                setupAccount: privateConfiguration}, {device: device});
                             return fails(() => reconnect.authenticate({server: reconnect.setupContext().server,
                                 username: 'Ben', password: 'right'}, other.host), 'account_mismatch');
                         });

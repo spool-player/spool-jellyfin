@@ -117,14 +117,13 @@ export function createSource(configuration, sourceHost) {
                 if (configuration.setupContext && configuration.setupContext.purpose === 'reconnect'
                     && (!saved || saved.userId !== result.User.Id || (saved.serverId || saved.server) !== serverId))
                     throw new Error('account_mismatch');
+                host.emit('configuration', { server: base, userId: result.User.Id, token: result.AccessToken,
+                    userName: result.User.Name || '', serverId: serverId, serverName: info.ServerName || '' });
                 return {
                     account: result.User.Id + '@' + serverId,
                     group: serverId,
                     label: result.User.Name || '',
-                    detail: info.ServerName || base.replace(/^https?:\/\//, ''),
-                    configuration: { server: base, userId: result.User.Id, token: result.AccessToken,
-                        userName: result.User.Name || '', serverId: serverId,
-                        serverName: info.ServerName || '' }
+                    detail: info.ServerName || base.replace(/^https?:\/\//, '')
                 };
             });
         });

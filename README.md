@@ -27,6 +27,8 @@ Jellyfin has no Home/PIN activation, so switching users of a server reuses each 
 Add profile and Sign in again on an existing server open its account chooser
 directly, preserving reverse-proxy base paths. The saved session is never reused
 to authenticate another viewer: each account retains its own token and user policy.
+Authentication completes with public account metadata; session credentials reach
+the host only through the private draft configuration event.
 
 Generic login, server identity, item-action and device-control layouts are precompiled
 into Spool, not shipped as duplicate provider screens. Use this provider with the
@@ -245,7 +247,7 @@ To try a checkout in Spool without releasing it, configure Spool with
 Prepared profile-UX release: **0.2.12**, adding saved-server profile/reauthentication
 context without sharing viewer sessions. Publish only with the reviewed profile-UX
 host whose shared login supports this context; canonical 0.2.11 remains independent.
-The format-3 SDK is pinned to Spool commit `6185eaa895f2df9b9fcb56c39a1eae35447595b5`.
+The profile-UX SDK is pinned to Spool commit `8434fc141951b3cd8a5e59b2eedf99863018712d`.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool
