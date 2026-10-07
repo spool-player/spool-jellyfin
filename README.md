@@ -24,6 +24,9 @@ Several users and several servers can be signed in at once. Each account's group
 so users of the same server form one Spool profile set: one of them watches at a time, the set has its
 own startup choice (always this user, or ask at startup), and different servers are shown together.
 Jellyfin has no Home/PIN activation, so switching users of a server reuses each user's saved session.
+Add profile and Sign in again on an existing server open its account chooser
+directly, preserving reverse-proxy base paths. The saved session is never reused
+to authenticate another viewer: each account retains its own token and user policy.
 
 Generic login, server identity, item-action and device-control layouts are precompiled
 into Spool, not shipped as duplicate provider screens. Use this provider with the

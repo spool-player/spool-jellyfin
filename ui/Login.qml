@@ -3,6 +3,7 @@ import Spool
 
 ServerLogin {
     serviceName: "Jellyfin"
+    setupContextOperation: "setupContext"
     codeLabel: "Quick Connect"
     codeStartOperation: "quickConnectStart"
     codePollOperation: "quickConnectPoll"
@@ -11,6 +12,7 @@ ServerLogin {
     codeAvailableField: "quickConnectAvailable"
     errorMessages: ({
                         not_jellyfin: "Not a Jellyfin server",
+                        account_mismatch: "Sign in as the saved profile on its original server.",
                         quick_connect_off: "Quick Connect is off on this server"
                     })
 }

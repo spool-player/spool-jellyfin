@@ -111,15 +111,22 @@ export function createSource(configuration, sourceHost) {
         return request(host, 'POST', path, {}, body, base).then(result => {
             if (!result.AccessToken || !result.User || !result.User.Id)
                 throw new Error('invalid_credentials');
-            return request(host, 'GET', '/System/Info/Public', {}, undefined, base).then(info => ({
-                account: result.User.Id + '@' + (result.ServerId || info.Id || base),
-                group: result.ServerId || info.Id || base,
-                label: result.User.Name || '',
-                detail: info.ServerName || base.replace(/^https?:\/\//, ''),
-                configuration: { server: base, userId: result.User.Id, token: result.AccessToken,
-                    userName: result.User.Name || '', serverId: result.ServerId || info.Id || '',
-                    serverName: info.ServerName || '' }
-            }));
+            return request(host, 'GET', '/System/Info/Public', {}, undefined, base).then(info => {
+                const serverId = result.ServerId || info.Id || base;
+                const saved = configuration.setupAccount;
+                if (configuration.setupContext && configuration.setupContext.purpose === 'reconnect'
+                    && (!saved || saved.userId !== result.User.Id || (saved.serverId || saved.server) !== serverId))
+                    throw new Error('account_mismatch');
+                return {
+                    account: result.User.Id + '@' + serverId,
+                    group: serverId,
+                    label: result.User.Name || '',
+                    detail: info.ServerName || base.replace(/^https?:\/\//, ''),
+                    configuration: { server: base, userId: result.User.Id, token: result.AccessToken,
+                        userName: result.User.Name || '', serverId: serverId,
+                        serverName: info.ServerName || '' }
+                };
+            });
         });
     }
 
@@ -157,6 +164,10 @@ export function createSource(configuration, sourceHost) {
 
         // Sign-in. These run before the account exists, against `server`
         // given in the arguments, once the screen has allowed that origin.
+        setupContext: () => ({
+            server: configuration.setupAccount && configuration.setupAccount.server
+                ? normalizeServer(configuration.setupAccount.server) : ''
+        }),
         discover: (args, host) => host.discover({ port: 7359, message: 'who is JellyfinServer?', timeout: 1500 })
             .then(replies => {
                 const servers = {};

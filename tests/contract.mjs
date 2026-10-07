@@ -562,6 +562,31 @@ export function run() {
                     check(result.label === 'Ann' && result.detail === 'Home', 'account label');
                     check(result.configuration.token === 'new-token'
                         && result.configuration.server === 'http://jf.local:8096', 'configuration');
+                    const secondLogin = createSource({setupContext: {purpose: 'addProfile'},
+                        setupAccount: result.configuration}, {device: device});
+                    check(secondLogin.setupContext().server === 'http://jf.local:8096',
+                        'adding another viewer prefills the saved server without returning its session');
+                    const nested = createSource({setupAccount: {server: 'https://media.example/proxy/jellyfin/', token: 'private'}},
+                        {device: device}).setupContext();
+                    check(nested.server === 'https://media.example/proxy/jellyfin' && !nested.token,
+                        'server prefill preserves a reverse-proxy base path and never exposes credentials');
+                    const other = server({
+                        'GET /System/Info/Public': {Id: 'server-id', ServerName: 'Home'},
+                        'POST /Users/AuthenticateByName': {AccessToken: 'other-token', ServerId: 'server-id',
+                            User: {Id: 'u2', Name: 'Ben'}}
+                    });
+                    return secondLogin.authenticate({server: secondLogin.setupContext().server, username: 'Ben', password: 'right'},
+                        other.host).then(viewer => {
+                            check(viewer.group === result.group && viewer.account !== result.account
+                                && viewer.configuration.userId === 'u2' && viewer.configuration.token === 'other-token',
+                                'a second viewer shares only server grouping, not identity or session permission');
+                            check(other.calls.every(call => !call.options.headers.Authorization.includes('new-token')),
+                                'adding a viewer never authenticates with the saved viewer token');
+                            const reconnect = createSource({setupContext: {purpose: 'reconnect'},
+                                setupAccount: result.configuration}, {device: device});
+                            return fails(() => reconnect.authenticate({server: reconnect.setupContext().server,
+                                username: 'Ben', password: 'right'}, other.host), 'account_mismatch');
+                        });
                 });
         }).then(() => {
             step = 'events';
