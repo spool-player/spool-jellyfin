@@ -19,6 +19,7 @@ Spool. Spool bundles it and keeps it up to date from this repository's releases.
 | `logic/downloads.mjs` | Exact-edition original files, HTTP progressive encoding and session cleanup |
 | `ui/Login.qml` | Service labels and Quick Connect operations for Spool's compiled `ServerLogin` |
 | `ui/Picker.qml` | Download edition selection plus compiled item pickers and device controls |
+| `ui/Settings.qml` | Signed-in server-user language and audio/subtitle defaults with policy-aware editing |
 
 Several users and several servers can be signed in at once. Each account's group is its server ID,
 so users of the same server form one Spool profile set: one of them watches at a time, the set has its
@@ -33,8 +34,12 @@ the host only through the private draft configuration event.
 Generic login, server identity, item-action and device-control layouts are precompiled
 into Spool, not shipped as duplicate provider screens. Use this provider with the
 matching Spool build exposing `ServerLogin`, `ProviderActionPicker` and
-`ProviderRemoteControls`. Playback/appearance settings live in Spool; the redundant
-provider settings page has been removed.
+`ProviderRemoteControls`. Local playback/appearance settings remain in Spool;
+this provider's settings edit the signed-in user's Jellyfin server preferences,
+which also affect other Jellyfin clients. Unsupported fields and policy-denied
+preferences are read-only. Reload and failed saves retain unsaved edits; only
+Save changes writes the changed fields, and closing cancels pending requests.
+Changes already accepted by the server are not rolled back by closing.
 
 Playback and protected trickplay sheets use the owning account's full
 `Authorization: MediaBrowser …` header, including the saved device identity.
@@ -222,9 +227,9 @@ The SDK under `sdk/` is pinned from Spool (`sdk.lock.json`; `tools/check-sdk.py`
 cmake -S sdk -B build/sdk && cmake --build build/sdk
 build/sdk/provider-contract-runner tests/contract.mjs
 QV4_FORCE_INTERPRETER=1 build/sdk/provider-contract-runner tests/contract.mjs
-python3 sdk/spool-provider.py build .          # dist/spool.jellyfin-<version>.tar.zst
 VERSION=$(python3 -c 'import json; print(json.load(open("manifest.json"))["version"])')
-python3 sdk/spool-provider.py validate "dist/spool.jellyfin-$VERSION.tar.zst"
+python3 sdk/spool-provider.py build . --output "dist/spool.jellyfin-$VERSION.szo"
+python3 sdk/spool-provider.py validate "dist/spool.jellyfin-$VERSION.szo"
 ```
 
 `tests/contract.mjs` runs the provider against a scripted server in Qt's JS engine, the one Spool uses.
@@ -244,10 +249,15 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 ## Releasing
 
-Prepared profile-UX release: **0.2.12**, adding saved-server profile/reauthentication
-context without sharing viewer sessions. Publish only with the reviewed profile-UX
-host whose shared login supports this context; canonical 0.2.11 remains independent.
+Prepared private profile-UX release: **0.2.13**, adding server-user preference
+settings to the saved-server profile/reauthentication context without sharing
+viewer sessions. This source is not a published tag; use only with the reviewed
+profile-UX host. Canonical published providers remain independent.
 The profile-UX SDK is pinned to Spool commit `8434fc141951b3cd8a5e59b2eedf99863018712d`.
+
+Future packages use `.szo` (Spool Zstandard Object): unchanged format-3 zstd
+USTAR bytes, selected with the pinned SDK's explicit `--output` option. Existing
+published archive names, URLs and digest pins remain immutable.
 
 Bump `version` in `manifest.json`, then push a `v<version>` tag. The workflow runs the contract,
 builds the package, attaches it with `spool-provider.json` to a GitHub release and asks the Spool

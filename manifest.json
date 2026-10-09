@@ -2,7 +2,7 @@
   "format": 3,
   "id": "spool.jellyfin",
   "name": "Jellyfin",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "publisher": "Spool",
   "summary": "Your Jellyfin server",
   "homepage": "https://github.com/spool-player/spool-jellyfin",
@@ -32,7 +32,8 @@
   ],
   "ui": {
     "login": "ui/Login.qml",
-    "picker": "ui/Picker.qml"
+    "picker": "ui/Picker.qml",
+    "settings": "ui/Settings.qml"
   },
   "actions": [
     {
