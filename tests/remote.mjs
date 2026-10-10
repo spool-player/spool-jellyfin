@@ -202,8 +202,10 @@ export function remoteContracts(emby = false) {
             check(emby ? seek.wireBody.indexOf('"SeekPositionTicks":9007199254740993') >= 0
                 && seek.body.Command === 'Seek' : seek.query.seekPositionTicks === '9007199254740993',
                 'seek encodes exact decimal ticks in the documented service transport');
+            before = metadataReads;
             return command({ action: 'queueMove', entryId: 'second', index: 2, afterEntryId: 'third' });
         }).then(() => {
+            check(metadataReads === before, 'queue mutation and confirmation need no item metadata');
             const call = mutationCalls().find(call => call.path === '/Sessions/target/Playing');
             check(call.query[emby ? 'ItemIds' : 'itemIds'] === 'film,other,film', 'move preserves both duplicate media occurrences');
             check((emby ? call.body.StartIndex : Number(call.query.startIndex)) === 2
@@ -239,10 +241,12 @@ export function remoteContracts(emby = false) {
             metadataReads = 0;
             return source.remoteQueue({ targetId: 'target', limit: 100 }, host);
         }).then(page => {
-            check(page.items[99].id === 'item-99' && (emby ? metadataReads === 0 : metadataReads === 3), 'metadata batches preserve original queue order');
+            check(page.items[99].id === 'item-99' && (emby ? metadataReads === 0 : metadataReads === 2),
+                'metadata batches hydrate only the requested page in original queue order');
             return source.remoteQueue({ targetId: 'target', limit: 100, cursor: page.cursor }, host);
         }).then(page => {
             check(page.items[1].id === 'item-0' && page.items[1].entryId === 'duplicate', 'last duplicate is not deduplicated');
+            check(emby ? metadataReads === 0 : metadataReads === 3, 'later duplicate reuses snapshot metadata');
             const beforeEvents = events.length;
             sockets[0].onmessage(JSON.stringify({ MessageType: 'Sessions', Data: [target()] }));
             check(events.length === beforeEvents + 1 && events[beforeEvents].name === 'remoteChanged'
