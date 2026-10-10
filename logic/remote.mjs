@@ -452,12 +452,17 @@ export function createRemote(options) {
         queueReads.delete(id);
         return Promise.resolve().then(operation).then(() => {
             mutations.delete(id);
+            // A first-page read can begin while this command is in flight.
+            // Retire it at settlement as well as when the mutation starts.
+            snapshots.delete(id);
+            queueReads.delete(id);
             if (options.emit)
                 options.emit('remoteChanged', { targetId: id });
             return {};
         }, error => {
             mutations.delete(id);
             snapshots.delete(id);
+            queueReads.delete(id);
             if (options.emit)
                 options.emit('remoteChanged', { targetId: id });
             throw error;
