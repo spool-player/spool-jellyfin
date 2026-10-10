@@ -2,6 +2,38 @@
 // Downloads deliberately negotiate HTTP progressive output, never playback HLS.
 import { deviceProfile } from './profile.mjs';
 
+function fileSizeLabel(value) {
+    const bytes = Number(value);
+    if (!Number.isSafeInteger(bytes) || bytes <= 0)
+        return '';
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    let size = bytes;
+    let unit = 0;
+    while (size >= 1024 && unit < units.length - 1) {
+        size /= 1024;
+        ++unit;
+    }
+    return size.toFixed(unit > 0 && size < 10 ? 1 : 0) + ' ' + units[unit];
+}
+
+function editionChoice(source, index) {
+    const video = (source.MediaStreams || []).find(stream => stream.Type === 'Video') || {};
+    // Same-named editions can share a resolution. Show enough of the actual
+    // file to distinguish them, without exposing its directory on the server.
+    const filename = source.Protocol === 'File' ? String(source.Path || '').split(/[\\/]/).pop() : '';
+    const label = source.Name || filename || 'Edition ' + (index + 1);
+    const size = fileSizeLabel(source.Size);
+    const detail = [
+        video.Height > 0 ? video.Height + (video.IsInterlaced ? 'i' : 'p') : '',
+        String(video.Codec || '').toUpperCase(),
+        video.VideoRange === 'HDR' ? 'HDR' : '',
+        String(source.Container || '').toUpperCase(),
+        size ? 'Original size: ' + size : '',
+        filename !== label ? filename : ''
+    ].filter(Boolean).join(' · ');
+    return { id: source.Id, label: label, detail: detail };
+}
+
 export function createDownloads(options) {
     const { request, userPath, userId, device, server, authorization, query, segment } = options;
     const headers = () => ({ Authorization: authorization() });
@@ -75,9 +107,7 @@ export function createDownloads(options) {
             const sources = raw.MediaSources || [];
             if (!args.variantId && sources.length > 1)
                 return { pick: { kind: 'downloadVariant', itemId: args.itemId, mode: args.mode,
-                    variants: sources.map(source => ({ id: source.Id, label: source.Name || 'Media version',
-                        detail: [source.Container, source.MediaStreams && source.MediaStreams.filter(s => s.Type === 'Video')
-                            .map(s => s.Height ? s.Height + 'p' : s.Codec).join(', ')].filter(Boolean).join(' · ') })) } };
+                    variants: sources.map(editionChoice) } };
             const source = args.variantId ? sources.find(row => row.Id === args.variantId) : sources[0];
             if (!source || typeof source.Id !== 'string' || !source.Id)
                 throw new Error('selected_variant_unavailable');
