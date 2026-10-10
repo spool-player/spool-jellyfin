@@ -218,7 +218,9 @@ export function createRemote(options) {
             return result;
         });
     }
-    function loadQueue(host, id, raw) {
+    // Snapshot the bounded occurrence list once. Queue edits and confirmation
+    // need these identities, not thousands of item/stream metadata lookups.
+    function readQueue(host, id, raw) {
         const pending = emby ? request(host, 'GET', '/Sessions/PlayQueue', { Id: id })
             : Promise.resolve(raw.NowPlayingQueue);
         return pending.then(value => {
@@ -229,35 +231,47 @@ export function createRemote(options) {
                 throw new Error('response_limit');
             const seen = new Set();
             const metadata = new Map();
+            const identities = [];
             for (const entry of entries) {
                 const entryId = identity(entry.PlaylistItemId);
                 if (!identity(entry.Id) || entryId === undefined || seen.has(entryId))
                     throw new Error('remote_queue_unavailable');
                 seen.add(entryId);
+                identities.push({ id: String(entry.Id), entryId: entryId });
                 if (entry.Type && typeof entry.Name === 'string')
                     metadata.set(String(entry.Id), entry);
             }
-            const missing = Array.from(new Set(entries.map(row => String(row.Id)))).filter(id => !metadata.has(id));
-            let offset = 0;
-            function batch() {
-                if (offset >= missing.length)
-                    return Promise.resolve();
-                const ids = missing.slice(offset, offset += 50);
-                return request(host, 'GET', userPath('/Items'), { Ids: ids.join(','), Fields: 'MediaSources', Limit: 50 })
-                    .then(result => {
-                        for (const row of rows(result)) {
-                            if (ids.indexOf(String(row.Id)) >= 0)
-                                metadata.set(String(row.Id), row);
-                        }
-                        return batch();
-                    });
-            }
-            return Promise.all([batch(), batch()]).then(() => entries.map(entry => {
-                const found = metadata.get(String(entry.Id));
+            return { entries: identities, metadata: metadata };
+        });
+    }
+    // At most one requested page is hydrated: 100 rows need at most two
+    // concurrent 50-ID requests, regardless of the total queue length.
+    function queuePage(host, snapshot, first, end) {
+        const entries = snapshot.entries.slice(first, end);
+        const metadata = snapshot.metadata;
+        const missing = Array.from(new Set(entries.map(row => row.id))).filter(id => !metadata.has(id));
+        const batches = [];
+        for (let offset = 0; offset < missing.length; offset += 50) {
+            const ids = missing.slice(offset, offset + 50);
+            const requested = new Set(ids);
+            batches.push(request(host, 'GET', userPath('/Items'), { Ids: ids.join(','), Fields: 'MediaSources', Limit: 50 })
+                .then(result => {
+                    for (const row of rows(result)) {
+                        if (requested.has(String(row.Id)))
+                            metadata.set(String(row.Id), row);
+                    }
+                }));
+        }
+        return Promise.all(batches).then(() => {
+            const mapped = new Map();
+            return entries.map(entry => {
+                const found = metadata.get(entry.id);
                 if (!found)
                     throw new Error('remote_queue_unavailable');
-                return Object.assign(item(found), { entryId: identity(entry.PlaylistItemId) });
-            }));
+                if (!mapped.has(entry.id))
+                    mapped.set(entry.id, item(found));
+                return Object.assign({}, mapped.get(entry.id), { entryId: entry.entryId });
+            });
         });
     }
     function general(host, id, name, arguments_) {
@@ -330,8 +344,8 @@ export function createRemote(options) {
             if (!raw.NowPlayingItem || String(raw.NowPlayingItem.Id) !== ids[index] || playState.IsPaused === true
                 || observed === undefined || Math.abs(Number(observed.slice(0, -7) || '0') - Number(decimal.slice(0, -7) || '0')) > 3)
                 return false;
-            return loadQueue(host, id, raw).then(queue => queue.length === ids.length
-                && queue.every((row, i) => row.id === ids[i]) && currentEntry(raw, queue) === index);
+            return readQueue(host, id, raw).then(snapshot => snapshot.entries.length === ids.length
+                && snapshot.entries.every((row, i) => row.id === ids[i]) && currentEntry(raw, snapshot.entries) === index);
         }).then(confirmed => {
             if (confirmed)
                 return;
@@ -341,7 +355,8 @@ export function createRemote(options) {
         });
     }
     function replaceQueue(host, id, raw, command) {
-        return loadQueue(host, id, raw).then(queue => {
+        return readQueue(host, id, raw).then(snapshot => {
+            const queue = snapshot.entries;
             const source = queue.findIndex(row => row.entryId === command.entryId);
             if (source < 0)
                 throw new Error('entry_unavailable');
@@ -473,19 +488,33 @@ export function createRemote(options) {
                 const sequence = String(++snapshotSequence);
                 queueReads.set(id, sequence);
                 snapshots.delete(id);
-                pending = session(host, id).then(raw => loadQueue(host, id, raw)).then(entries => {
+                pending = session(host, id).then(raw => readQueue(host, id, raw)).then(queue => {
                     if (queueReads.get(id) !== sequence)
                         throw new Error('invalid_cursor');
-                    const snapshot = { id: sequence, entries: entries, next: 0 };
+                    const snapshot = { id: sequence, entries: queue.entries, metadata: queue.metadata, next: 0, reading: false };
                     snapshots.set(id, snapshot);
                     return snapshot;
                 });
             }
             return pending.then(snapshot => {
+                if (snapshots.get(id) !== snapshot || queueReads.get(id) !== snapshot.id
+                    || snapshot.reading || first !== snapshot.next)
+                    throw new Error('invalid_cursor');
                 const end = Math.min(first + limit, snapshot.entries.length);
-                snapshot.next = end;
-                return { items: snapshot.entries.slice(first, end), total: snapshot.entries.length,
-                    exhausted: end === snapshot.entries.length, cursor: end === snapshot.entries.length ? null : snapshot.id + ':' + end };
+                snapshot.reading = true;
+                return Promise.resolve().then(() => queuePage(host, snapshot, first, end)).then(items => {
+                    snapshot.reading = false;
+                    // A new first page or a mutation may have invalidated this
+                    // snapshot while the requested metadata was being loaded.
+                    if (snapshots.get(id) !== snapshot || queueReads.get(id) !== snapshot.id)
+                        throw new Error('invalid_cursor');
+                    snapshot.next = end;
+                    return { items: items, total: snapshot.entries.length, exhausted: end === snapshot.entries.length,
+                        cursor: end === snapshot.entries.length ? null : snapshot.id + ':' + end };
+                }, error => {
+                    snapshot.reading = false;
+                    throw error;
+                });
             });
         },
         remoteCommand: (args, host) => {

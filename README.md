@@ -142,7 +142,10 @@ the session's nested media-control capabilities and excludes this installation.
 Selecting a device only reads state. Unknown duration/volume and nonexistent
 command acknowledgements stay absent; stream controls use native stream indices.
 Queue rows preserve every occurrence, with missing metadata fetched in batches
-of at most 50 unique IDs. A bounded snapshot supplies subsequent queue pages.
+of at most 50 unique IDs. Only the requested page is hydrated; a bounded identity
+snapshot supplies subsequent pages and reuses metadata for repeated items.
+Queue edits and replacement confirmation read occurrence identities without
+fetching item metadata for the whole queue.
 
 Remote queue edits **restart playback**, rather than pretending to mutate a
 client's queue in place. A surviving current occurrence keeps its position;
