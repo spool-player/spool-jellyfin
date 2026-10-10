@@ -233,6 +233,8 @@ python3 sdk/spool-provider.py validate "dist/spool.jellyfin-$VERSION.szo"
 ```
 
 `tests/contract.mjs` runs the provider against a scripted server in Qt's JS engine, the one Spool uses.
+Catalogue pagination terminates on empty backend pages even with a stale positive total;
+nonempty pages advance by the raw row count before invalid IDs are filtered.
 Download contracts cover ambiguous/selected editions, HTTP encoding quality,
 separate cleanup sessions, HLS/copy/foreign-origin rejection, permissions and
 non-finite/multipart rejection. Preview contracts cover disabled metadata and
