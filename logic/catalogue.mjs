@@ -72,8 +72,24 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
         });
     }
     const playlistTypes = ['Movie', 'Episode', 'Series', 'Season', 'Audio', 'MusicAlbum', 'MusicVideo', 'Video'];
-    function allowedActions(host, raw, p) {
+    const ratingTypes = ['Movie', 'Series', 'Season', 'Episode', 'Audio', 'MusicAlbum', 'MusicArtist',
+        'MusicVideo', 'Video', 'Book', 'AudioBook'];
+    const ratingIds = ['like', 'dislike', 'clearRating'];
+    function ratingActions(raw) {
+        if (ratingTypes.indexOf(raw.Type) < 0)
+            return [];
+        const likes = (raw.UserData || {}).Likes;
         const actions = [];
+        if (likes !== true)
+            actions.push({ id: 'like', label: 'Like', icon: 'thumb_up' });
+        if (likes !== false)
+            actions.push({ id: 'dislike', label: 'Dislike', icon: 'thumb_down' });
+        if (typeof likes === 'boolean')
+            actions.push({ id: 'clearRating', label: 'Clear personal rating', icon: 'clear' });
+        return actions;
+    }
+    function allowedActions(host, raw, p) {
+        const actions = ratingActions(raw);
         if (playlistTypes.indexOf(raw.Type) >= 0 && p.EnablePlaylistAccess !== false)
             actions.push({ id: 'playlist', label: 'Add to playlist', icon: 'playlist_add' });
         if (['Movie', 'Series'].indexOf(raw.Type) >= 0 && collectionAllowed(p))
@@ -102,9 +118,12 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
             });
     }
     function authorizeAction(args, host) {
-        if (['playlist', 'collection', 'rename', 'delete'].indexOf(args.action) < 0)
+        const personalRating = ratingIds.indexOf(args.action) >= 0;
+        if (!personalRating && ['playlist', 'collection', 'rename', 'delete'].indexOf(args.action) < 0)
             throw new Error('unsupported_action');
-        return actionsFor(host, args.itemId).then(actions => {
+        // Personal ratings depend on current item/user state, not server editing rights.
+        return (personalRating ? rawItem(host, args.itemId).then(raw => ratingActions(raw))
+            : actionsFor(host, args.itemId)).then(actions => {
             if (!actions.some(action => action.id === args.action))
                 throw new Error('permission_denied');
             if (args.targetId && (args.action === 'playlist' || args.action === 'collection')) {

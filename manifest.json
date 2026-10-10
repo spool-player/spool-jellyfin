@@ -37,6 +37,60 @@
   },
   "actions": [
     {
+      "id": "like",
+      "label": "Like",
+      "icon": "thumb_up",
+      "types": [
+        "Movie",
+        "Series",
+        "Season",
+        "Episode",
+        "Audio",
+        "MusicAlbum",
+        "MusicArtist",
+        "MusicVideo",
+        "Video",
+        "Book",
+        "AudioBook"
+      ]
+    },
+    {
+      "id": "dislike",
+      "label": "Dislike",
+      "icon": "thumb_down",
+      "types": [
+        "Movie",
+        "Series",
+        "Season",
+        "Episode",
+        "Audio",
+        "MusicAlbum",
+        "MusicArtist",
+        "MusicVideo",
+        "Video",
+        "Book",
+        "AudioBook"
+      ]
+    },
+    {
+      "id": "clearRating",
+      "label": "Clear personal rating",
+      "icon": "clear",
+      "types": [
+        "Movie",
+        "Series",
+        "Season",
+        "Episode",
+        "Audio",
+        "MusicAlbum",
+        "MusicArtist",
+        "MusicVideo",
+        "Video",
+        "Book",
+        "AudioBook"
+      ]
+    },
+    {
       "id": "playlist",
       "label": "Add to playlist",
       "icon": "playlist_add",

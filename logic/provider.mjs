@@ -418,6 +418,14 @@ export function createSource(configuration, sourceHost) {
         runItemAction: (args, host) => catalogue.authorizeAction(args, host).then(() => {
             const id = segment(args.itemId);
             switch (args.action) {
+            case 'like':
+            case 'dislike':
+            case 'clearRating':
+                return request(host, args.action === 'clearRating' ? 'DELETE' : 'POST', '/UserItems/' + id + '/Rating',
+                    { userId: userId, likes: args.action === 'clearRating' ? undefined : args.action === 'like' })
+                    .then(() => ({ changed: true, itemId: args.itemId,
+                        message: args.action === 'clearRating' ? 'Personal rating cleared'
+                            : args.action === 'like' ? 'Liked' : 'Disliked' }));
             case 'playlist':
             case 'collection':
                 if (!args.targetId && !args.newName)

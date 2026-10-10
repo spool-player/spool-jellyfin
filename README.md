@@ -127,11 +127,17 @@ mixed-type queries concurrently, prioritizes Series, deduplicates and returns a
 bounded complete top-N set rather than an index continuation. Suggestions use
 Jellyfin's favorite/liked-plus-random video query, never Continue Watching.
 
+Item menus offer **Like**, **Dislike** and **Clear personal rating** for movies,
+shows, episodes, music and books. The menu reflects the signed-in user's current
+rating and rechecks the item before applying an action. Personal ratings use
+Jellyfin's rating endpoint and leave favorites, watched status and resume position
+unchanged. They are available to ordinary viewers without server editing rights.
+
 Permissions are loaded only when opening an action/editor and cached per source;
 authorization failures, user-change notifications and reconnects invalidate the
 account policy. Cold menus fetch item metadata and account policy concurrently;
 collection pages load their type without re-reading unused edit permissions.
-Baseline actions also check policy before mutation. Playlist
+Server-editing actions also check policy before mutation. Playlist
 editing checks the current user's granular playlist permission when supported,
 falling back conservatively to explicit item edit rights, ownership or explicit
 administrator policy on older servers. Playlist edits use opaque occurrence IDs;
