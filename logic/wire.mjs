@@ -1,9 +1,24 @@
 // SPDX-License-Identifier: MPL-2.0
-// Only explicitly wrapped tick values bypass JSON.stringify's number conversion.
+// Exact integer tokens and reusable fragments are constructed only by this module.
 class TickInteger {
     constructor(value) {
         this.decimal = value;
     }
+}
+
+class JsonSnapshot {
+    constructor(value) {
+        // Only this encoder produces the reusable fragment. Caller-provided
+        // strings remain ordinary escaped strings, never raw JSON.
+        this.encoded = wireJson(value);
+        Object.freeze(this);
+    }
+}
+
+// Capture immutable request parts once, including exact wrapped tick values.
+// The original object can change afterwards without changing its wire snapshot.
+export function wireSnapshot(value) {
+    return new JsonSnapshot(value);
 }
 
 export function tickInteger(value) {
@@ -26,6 +41,8 @@ export function tickInteger(value) {
 export function wireJson(value) {
     if (value instanceof TickInteger)
         return value.decimal;
+    if (value instanceof JsonSnapshot)
+        return value.encoded;
     if (value === null || typeof value !== 'object')
         return JSON.stringify(value);
     if (Array.isArray(value)) {

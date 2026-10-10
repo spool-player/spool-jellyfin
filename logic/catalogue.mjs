@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 // Optional catalogue contracts. All IDs here are server IDs, never host-scoped IDs.
+import { wireSnapshot } from './wire.mjs';
+
 export function createCatalogue({ request, list, userPath, segment, capabilities, userId, emby = false }) {
     let policy = null;
     let policyGeneration = 0;
@@ -134,16 +136,19 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
                         || (row.mediaType !== 'audio' && row.mediaType !== 'video')
                         || (row.entryId !== undefined && (typeof row.entryId !== 'string' || !row.entryId)))
                         throw new Error('invalid_queue');
-                    return Object.freeze({ Id: row.itemId, PlaylistItemId: row.entryId });
+                    return { Id: row.itemId, PlaylistItemId: row.entryId };
                 });
-                queue = Object.freeze({ revision: snapshot.revision, items: Object.freeze(items) });
+                // Membership is immutable until its revision changes. Reusing
+                // its encoded form avoids walking every item on each progress
+                // report while preserving the complete server-facing payload.
+                queue = Object.freeze({ revision: snapshot.revision, items: wireSnapshot(items), length: items.length });
             }
         }
         if (args.queueIndex !== undefined && (!Number.isInteger(args.queueIndex) || args.queueIndex < 0
-            || (queue && args.queueIndex >= queue.items.length)))
+            || (queue && args.queueIndex >= queue.length)))
             throw new Error('invalid_queue');
         return queue ? { NowPlayingQueue: queue.items, PlaylistIndex: args.queueIndex,
-            PlaylistLength: queue.items.length } : {};
+            PlaylistLength: queue.length } : {};
     }
     function boundedLimit(args, maximum) {
         return Math.min(maximum, Math.max(1, Number.isInteger(args.limit) ? args.limit : maximum));
