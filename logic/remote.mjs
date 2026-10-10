@@ -73,6 +73,7 @@ export function createRemote(options) {
             if (!found) {
                 targets.delete(id);
                 snapshots.delete(id);
+                queueReads.delete(id);
                 throw new Error('target_unavailable');
             }
             return found;
@@ -249,6 +250,7 @@ export function createRemote(options) {
     function queuePage(host, snapshot, first, end) {
         const entries = snapshot.entries.slice(first, end);
         const metadata = snapshot.metadata;
+        const loaded = new Map();
         const missing = Array.from(new Set(entries.map(row => row.id))).filter(id => !metadata.has(id));
         const batches = [];
         for (let offset = 0; offset < missing.length; offset += 50) {
@@ -258,20 +260,32 @@ export function createRemote(options) {
                 .then(result => {
                     for (const row of rows(result)) {
                         if (requested.has(String(row.Id)))
-                            metadata.set(String(row.Id), row);
+                            loaded.set(String(row.Id), row);
                     }
                 }));
         }
         return Promise.all(batches).then(() => {
             const mapped = new Map();
-            return entries.map(entry => {
-                const found = metadata.get(entry.id);
+            const items = entries.map(entry => {
+                const found = loaded.get(entry.id) || metadata.get(entry.id);
                 if (!found)
                     throw new Error('remote_queue_unavailable');
-                if (!mapped.has(entry.id))
-                    mapped.set(entry.id, item(found));
+                if (!mapped.has(entry.id)) {
+                    try {
+                        mapped.set(entry.id, item(found));
+                    } catch (error) {
+                        // A malformed embedded record must not poison retries.
+                        metadata.delete(entry.id);
+                        throw error;
+                    }
+                }
                 return Object.assign({}, mapped.get(entry.id), { entryId: entry.entryId });
             });
+            // A failed batch/page never publishes partial cache entries, even
+            // when another response from that operation arrives afterwards.
+            for (const [id, raw] of loaded)
+                metadata.set(id, raw);
+            return items;
         });
     }
     function general(host, id, name, arguments_) {
@@ -459,9 +473,12 @@ export function createRemote(options) {
                     targets.clear();
                     for (const raw of found)
                         targets.set(String(raw.Id), raw);
-                    for (const id of snapshots.keys())
-                        if (!targets.has(id))
+                    for (const id of queueReads.keys()) {
+                        if (!targets.has(id)) {
                             snapshots.delete(id);
+                            queueReads.delete(id);
+                        }
+                    }
                 }
                 return { targets: found.map(raw => ({ id: String(raw.Id), name: raw.DeviceName || raw.Client || String(raw.Id),
                     detail: [raw.Client, raw.UserName].filter(Boolean).join(' · '), commands: commands(raw),
