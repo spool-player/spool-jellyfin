@@ -128,7 +128,9 @@ Jellyfin's favorite/liked-plus-random video query, never Continue Watching.
 
 Permissions are loaded only when opening an action/editor and cached per source;
 authorization failures, user-change notifications and reconnects invalidate the
-account policy. Baseline actions also check policy before mutation. Playlist
+account policy. Cold menus fetch item metadata and account policy concurrently;
+collection pages load their type without re-reading unused edit permissions.
+Baseline actions also check policy before mutation. Playlist
 editing checks the current user's granular playlist permission when supported,
 falling back conservatively to explicit item edit rights, ownership or explicit
 administrator policy on older servers. Playlist edits use opaque occurrence IDs;

@@ -52,10 +52,15 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
                 throw error;
             });
     }
-    function container(host, id) {
+    function containerItem(host, id) {
         return rawItem(host, id).then(raw => {
             if (raw.Type !== 'Playlist' && raw.Type !== 'BoxSet')
                 throw new Error('unsupported_collection');
+            return raw;
+        });
+    }
+    function container(host, id) {
+        return containerItem(host, id).then(raw => {
             const ordered = raw.Type === 'Playlist';
             const permission = ordered ? editablePlaylist(host, raw)
                 : userPolicy(host).then(p => raw.CanEditItems !== false && collectionAllowed(p));
@@ -65,28 +70,39 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
         });
     }
     const playlistTypes = ['Movie', 'Episode', 'Series', 'Season', 'Audio', 'MusicAlbum', 'MusicVideo', 'Video'];
-    function allowedActions(host, raw) {
-        return userPolicy(host).then(p => {
-            const actions = [];
-            if (playlistTypes.indexOf(raw.Type) >= 0 && p.EnablePlaylistAccess !== false)
-                actions.push({ id: 'playlist', label: 'Add to playlist', icon: 'playlist_add' });
-            if (['Movie', 'Series'].indexOf(raw.Type) >= 0 && collectionAllowed(p))
-                actions.push({ id: 'collection', label: 'Add to collection', icon: 'library_add' });
-            const permission = raw.Type === 'Playlist' ? editablePlaylist(host, raw)
-                : Promise.resolve(raw.Type === 'BoxSet' && raw.CanEditItems !== false && collectionAllowed(p));
-            return permission.then(editable => {
-                if (editable)
-                    actions.push({ id: 'rename', label: 'Rename', icon: 'drive_file_rename_outline' });
-                if (deleteAllowed(raw, p))
-                    actions.push({ id: 'delete', label: 'Delete from server', icon: 'delete' });
+    function allowedActions(host, raw, p) {
+        const actions = [];
+        if (playlistTypes.indexOf(raw.Type) >= 0 && p.EnablePlaylistAccess !== false)
+            actions.push({ id: 'playlist', label: 'Add to playlist', icon: 'playlist_add' });
+        if (['Movie', 'Series'].indexOf(raw.Type) >= 0 && collectionAllowed(p))
+            actions.push({ id: 'collection', label: 'Add to collection', icon: 'library_add' });
+        const permission = raw.Type === 'Playlist' ? editablePlaylist(host, raw)
+            : Promise.resolve(raw.Type === 'BoxSet' && raw.CanEditItems !== false && collectionAllowed(p));
+        return permission.then(editable => {
+            if (editable)
+                actions.push({ id: 'rename', label: 'Rename', icon: 'drive_file_rename_outline' });
+            if (deleteAllowed(raw, p))
+                actions.push({ id: 'delete', label: 'Delete from server', icon: 'delete' });
+            return actions;
+        });
+    }
+    function actionsFor(host, id) {
+        const generation = policyGeneration;
+        // Both requests belong to this operation; cancellation cannot poison a
+        // request shared with another menu or mutation.
+        return Promise.all([rawItem(host, id), userPolicy(host)])
+            .then(([raw, p]) => allowedActions(host, raw, p)).then(actions => {
+                // The faster policy request may have completed before an
+                // invalidation while item/playlist metadata was still loading.
+                if (generation !== policyGeneration)
+                    throw new Error('permissions_changed');
                 return actions;
             });
-        });
     }
     function authorizeAction(args, host) {
         if (['playlist', 'collection', 'rename', 'delete'].indexOf(args.action) < 0)
             throw new Error('unsupported_action');
-        return rawItem(host, args.itemId).then(raw => allowedActions(host, raw)).then(actions => {
+        return actionsFor(host, args.itemId).then(actions => {
             if (!actions.some(action => action.id === args.action))
                 throw new Error('permission_denied');
             if (args.targetId && (args.action === 'playlist' || args.action === 'collection')) {
@@ -168,7 +184,7 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
         },
         itemActions: (args, host) => {
             requireCapability('itemActions');
-            return rawItem(host, args.itemId).then(raw => allowedActions(host, raw)).then(actions => ({ actions: actions }));
+            return actionsFor(host, args.itemId).then(actions => ({ actions: actions }));
         },
         collectionInfo: (args, host) => {
             requireCapability('collectionEditing');
@@ -176,18 +192,22 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
         },
         collectionEntries: (args, host) => {
             requireCapability('collectionEditing');
-            return container(host, args.containerId).then(info =>
-                list(host, info.ordered ? '/Playlists/' + segment(args.containerId) + '/Items'
-                    : userPath('/Items'), args, info.ordered ? {} : { ParentId: args.containerId, Recursive: false })
+            // Reading a page needs the container type, not its edit policy.
+            // The entry endpoint still enforces this account's read access.
+            return containerItem(host, args.containerId).then(raw => {
+                const ordered = raw.Type === 'Playlist';
+                return list(host, ordered ? '/Playlists/' + segment(args.containerId) + '/Items'
+                    : userPath('/Items'), args, ordered ? {} : { ParentId: args.containerId, Recursive: false })
                     .then(result => {
                         for (const row of result.items) {
-                            if (!info.ordered)
+                            if (!ordered)
                                 row.entryId = row.id;
                             if (typeof row.entryId !== 'string' || !row.entryId)
                                 throw new Error('missing_entry_id');
                         }
                         return result;
-                    }));
+                    });
+            });
         },
         collectionRemove: (args, host) => {
             requireCapability('collectionEditing');
