@@ -137,7 +137,8 @@ falling back conservatively to explicit item edit rights, ownership or explicit
 administrator policy on older servers. Playlist edits use opaque occurrence IDs;
 collections permit membership removal but not reordering. Start/progress reports
 reuse a source-owned encoded queue snapshot, preserving duplicates without
-re-serializing every entry on unchanged progress; stop reports are
+re-serializing every entry on unchanged progress. Each revision is validated
+before replacing the cached queue; stop reports are
 unchanged. Backend permission failures are not host-upgrade notices.
 
 `remoteTargets` adds outbound control independently of inbound remote

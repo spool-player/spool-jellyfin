@@ -125,6 +125,7 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
             return {};
         if (args.queue !== undefined || args.queueIndex !== undefined)
             requireCapability('playbackQueueReporting');
+        let nextQueue = queue;
         if (args.queue !== undefined) {
             const snapshot = args.queue;
             if (!snapshot || typeof snapshot.revision !== 'string' || !snapshot.revision
@@ -141,12 +142,14 @@ export function createCatalogue({ request, list, userPath, segment, capabilities
                 // Membership is immutable until its revision changes. Reusing
                 // its encoded form avoids walking every item on each progress
                 // report while preserving the complete server-facing payload.
-                queue = Object.freeze({ revision: snapshot.revision, items: wireSnapshot(items), length: items.length });
+                nextQueue = Object.freeze({ revision: snapshot.revision, items: wireSnapshot(items), length: items.length });
             }
         }
         if (args.queueIndex !== undefined && (!Number.isInteger(args.queueIndex) || args.queueIndex < 0
-            || (queue && args.queueIndex >= queue.length)))
+            || (nextQueue && args.queueIndex >= nextQueue.length)))
             throw new Error('invalid_queue');
+        // Invalid queue arguments must not replace the snapshot used by later progress.
+        queue = nextQueue;
         return queue ? { NowPlayingQueue: queue.items, PlaylistIndex: args.queueIndex,
             PlaylistLength: queue.length } : {};
     }
