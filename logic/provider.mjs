@@ -306,6 +306,8 @@ export function createSource(configuration, sourceHost) {
                 Fields: fields, EnableUserData: true }).then(rows => page(rows, 0, limit + 1));
         },
         similar: (args, host) => list(host, '/Items/' + segment(args.itemId) + '/Similar', args),
+        relatedMedia: (args, host) => list(host,
+            '/Items/' + segment(args.itemId) + '/' + (args.kind === 'trailers' ? 'LocalTrailers' : 'SpecialFeatures'), args),
         personItems: (args, host) => list(host, '/Items', args, { PersonIds: args.personId, Recursive: true,
             SortBy: 'PremiereDate,ProductionYear,SortName', SortOrder: 'Descending' }),
         filterOptions: (args, host) => request(host, 'GET', '/Items/Filters', { UserId: userId, ParentId: args.parentId,
