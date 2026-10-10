@@ -43,6 +43,10 @@ Changes already accepted by the server are not rolled back by closing.
 
 Playback and protected trickplay sheets use the owning account's full
 `Authorization: MediaBrowser …` header, including the saved device identity.
+Sidecar subtitles and tracks negotiated for external delivery carry their own
+selected-edition URL and reuse those playback headers. Relative URLs preserve
+the configured server base path; foreign or malformed subtitle URLs are omitted
+without failing playback, and query credentials are removed from subtitle metadata.
 Each playback result carries its own sheet `urlTemplate`, tile geometry and
 interval, bound to the exact selected media source; a missing or invalid map
 does not borrow another edition's images or fail playback. Preview URLs contain

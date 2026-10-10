@@ -34,6 +34,37 @@ function query(values) {
         .map(key => encodeURIComponent(key) + '=' + encodeURIComponent(String(values[key]))).join('&');
 }
 
+// Subtitle requests reuse the resolved stream's account headers. A server may
+// extract an embedded track or return a sidecar; neither is inside the video
+// file. Never send those headers to a foreign subtitle origin.
+function subtitleUrl(value, server) {
+    if (typeof value !== 'string' || !value || /[\u0000-\u0020\u007f\\#]/.test(value))
+        return undefined;
+    const origin = url => {
+        const match = /^(https?):\/\/([^/?#]+)(?:[/?]|$)/i.exec(url);
+        if (!match)
+            return undefined;
+        const scheme = match[1].toLowerCase();
+        return scheme + '://' + match[2].toLowerCase().replace(scheme === 'https' ? /:443$/ : /:80$/, '');
+    };
+    const absolute = origin(value);
+    if (absolute ? absolute !== origin(server) : /^\/\/|^[a-z][a-z0-9+.-]*:/i.test(value))
+        return undefined;
+    const url = absolute ? value : server + '/' + value.replace(/^\/+/, '');
+    const separator = url.indexOf('?');
+    if (separator < 0)
+        return url;
+    try {
+        const parameters = url.slice(separator + 1).split('&').filter(pair => {
+            const key = decodeURIComponent(pair.split('=')[0]).toLowerCase();
+            return ['api_key', 'apikey', 'access_token', 'token'].indexOf(key) < 0;
+        }).join('&');
+        return url.slice(0, separator) + (parameters ? '?' + parameters : '');
+    } catch (error) {
+        return undefined;
+    }
+}
+
 function segment(value) {
     if (typeof value !== 'string' || !value)
         throw new Error('missing_id');
@@ -78,6 +109,15 @@ export function createSource(configuration, sourceHost) {
         return 'MediaBrowser Client="Spool", Device="' + quoted(device.name || 'Spool') + '", DeviceId="'
             + quoted(device.id || 'spool') + '", Version="' + quoted(device.version || '0') + '"'
             + (value ? ', Token="' + quoted(value) + '"' : '');
+    }
+
+    function playbackStream(raw) {
+        const result = stream(raw);
+        if (raw.Type === 'Subtitle' && (raw.IsExternal || raw.DeliveryMethod === 'External')) {
+            result.external = true;
+            result.url = subtitleUrl(raw.DeliveryUrl, server);
+        }
+        return result;
     }
 
     // `base` lets sign-in talk to a server before the account exists.
@@ -345,7 +385,7 @@ export function createSource(configuration, sourceHost) {
                         { enabled: args.videoPreviews === true, available: Boolean(preview), playMethod: playMethod });
                 return { url: url, headers: { Authorization: authorization() }, variantId: source.Id,
                     playSessionId: info.PlaySessionId || '', playMethod: playMethod,
-                    container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(stream),
+                    container: (source.Container || '').split(',')[0], streams: (source.MediaStreams || []).map(playbackStream),
                     segments: skip, trickplay: preview };
             });
         },
