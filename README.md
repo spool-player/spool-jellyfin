@@ -146,6 +146,10 @@ commands and SyncPlay. Discovery asks `/Sessions?controllableByUserId=...`, chec
 the session's nested media-control capabilities and excludes this installation.
 Selecting a device only reads state. Unknown duration/volume and nonexistent
 command acknowledgements stay absent; stream controls use native stream indices.
+Each poll reads fresh session state and reuses successfully normalized current-item
+metadata. Preview-enriched metadata also serves non-preview polls and track commands.
+Concurrent cold operations own separate metadata requests, so cancelling one does
+not cancel another; failed metadata reads can retry on a later poll.
 Queue rows preserve every occurrence, with missing metadata fetched in batches
 of at most 50 unique IDs. Only the requested page is hydrated; a bounded identity
 snapshot supplies subsequent pages and reuses metadata for repeated items.

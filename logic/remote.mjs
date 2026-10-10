@@ -40,6 +40,7 @@ export function createRemote(options) {
     const mutations = new Set();
     let snapshotSequence = 0;
     let listGeneration = 0;
+    let mediaSequence = 0;
     function guard() {
         if (capabilities['remoteTargets'] !== true)
             throw new Error('unsupported_capability');
@@ -67,13 +68,15 @@ export function createRemote(options) {
             result.deviceId = targets.get(id).DeviceId;
         return result;
     }
-    function session(host, id) {
+    function session(host, id, read) {
         return request(host, 'GET', '/Sessions', query(id)).then(result => {
             const found = rows(result).find(row => String(row.Id) === id && controllable(row));
             if (!found) {
                 targets.delete(id);
                 snapshots.delete(id);
                 queueReads.delete(id);
+                if (!read || mediaCache.get(id) === read.cache && read.sequence >= read.cache.observed)
+                    mediaCache.delete(id);
                 throw new Error('target_unavailable');
             }
             return found;
@@ -175,31 +178,44 @@ export function createRemote(options) {
         // Neither service promises a monotonic queue revision or command acknowledgement.
         return result;
     }
-    function hydrate(host, id, raw, videoPreviews) {
-        const media = raw.NowPlayingItem;
-        if (!media || !identity(media.Id)) {
-            mediaCache.delete(id);
-            return Promise.resolve(raw);
-        }
-        const key = String(media.Id) + ':' + String((raw.PlayState || {}).MediaSourceId || '') + ':' + Boolean(videoPreviews);
-        let cached = mediaCache.get(id);
-        if (!cached || cached.key !== key) {
-            cached = { key: key };
-            const unavailable = () => {
-                // An operation can be cancelled while another state poll starts.
-                // Do not cache failures, or evict a newer edition's metadata.
-                if (mediaCache.get(id) === cached)
-                    mediaCache.delete(id);
-                return {};
-            };
-            cached.pending = request(host, 'GET', userPath('/Items/') + encodeURIComponent(media.Id),
-                { Fields: !emby && videoPreviews ? 'MediaSources,Trickplay' : 'MediaSources' })
-                .then(details => details && String(details.Id) === String(media.Id) ? details : unavailable(), unavailable);
-            mediaCache.set(id, cached);
+    function beginMediaRead(id) {
+        const sequence = ++mediaSequence;
+        let cache = mediaCache.get(id);
+        if (!cache) {
+            cache = { observed: 0, identitySequence: sequence, detailsSequence: 0, previewSequence: 0 };
+            mediaCache.set(id, cache);
             if (mediaCache.size > 128)
                 mediaCache.delete(mediaCache.keys().next().value);
         }
-        return cached.pending.then(details => {
+        return { cache: cache, sequence: sequence };
+    }
+    function hydrate(host, id, raw, videoPreviews, read) {
+        const media = raw.NowPlayingItem;
+        const cache = read.cache;
+        const observe = mediaCache.get(id) === cache && read.sequence >= cache.observed;
+        if (!media || !identity(media.Id)) {
+            if (observe)
+                mediaCache.delete(id);
+            return Promise.resolve(normalize(raw, videoPreviews));
+        }
+        const itemId = String(media.Id);
+        const variantId = String((raw.PlayState || {}).MediaSourceId || '');
+        const previews = !emby && Boolean(videoPreviews);
+        if (observe) {
+            cache.observed = read.sequence;
+            if (cache.itemId !== itemId || cache.variantId !== variantId) {
+                if (cache.itemId !== undefined)
+                    cache.identitySequence = read.sequence;
+                cache.itemId = itemId;
+                cache.variantId = variantId;
+                cache.details = undefined;
+                cache.detailsSequence = 0;
+                cache.previewSequence = 0;
+            }
+        }
+        const current = () => mediaCache.get(id) === cache && cache.itemId === itemId && cache.variantId === variantId
+            && read.sequence >= cache.identitySequence;
+        const mapped = details => {
             const hydrated = Object.assign({}, details, media);
             // Reduced session DTOs may explicitly serialize omitted metadata as
             // null. Keep the richer fields fetched for this exact playing item.
@@ -207,12 +223,38 @@ export function createRemote(options) {
                 if (media[field] === null || media[field] === undefined)
                     hydrated[field] = details[field];
             }
-            return Object.assign({}, raw, { NowPlayingItem: hydrated });
-        });
+            return normalize(Object.assign({}, raw, { NowPlayingItem: hydrated }), videoPreviews);
+        };
+        const fallback = () => mapped(current() && cache.details ? cache.details : {});
+        if (current() && cache.details && (!previews || cache.previewSequence > 0))
+            return Promise.resolve(mapped(cache.details));
+        // Cache fulfilled data only. Every cold operation owns its HTTP work;
+        // cancelling one cannot cancel another reader's metadata request.
+        return request(host, 'GET', userPath('/Items/') + encodeURIComponent(media.Id),
+            { Fields: previews ? 'MediaSources,Trickplay' : 'MediaSources' }).then(details => {
+            if (!details || String(details.Id) !== itemId)
+                return fallback();
+            const result = mapped(details);
+            // Neither a failed normalization nor an older item/variant read
+            // may publish metadata. Preview enrichment survives later basic
+            // responses without replacing their newer non-preview fields.
+            if (current()) {
+                if (read.sequence >= cache.detailsSequence) {
+                    cache.details = cache.previewSequence > 0
+                        ? Object.assign({}, details, { Trickplay: cache.details.Trickplay }) : details;
+                    cache.detailsSequence = read.sequence;
+                }
+                if (previews && read.sequence >= cache.previewSequence) {
+                    cache.details = Object.assign({}, cache.details, { Trickplay: details.Trickplay });
+                    cache.previewSequence = read.sequence;
+                }
+            }
+            return result;
+        }, fallback);
     }
     function state(host, id, videoPreviews) {
-        return session(host, id).then(raw => hydrate(host, id, raw, videoPreviews)).then(raw => {
-            const result = normalize(raw, videoPreviews);
+        const read = beginMediaRead(id);
+        return session(host, id, read).then(raw => hydrate(host, id, raw, videoPreviews, read)).then(result => {
             if (host.isLogEnabled('trace'))
                 host.log('trace', 'Jellyfin remote preview availability',
                     { enabled: videoPreviews === true, available: Boolean(result.preview) });
@@ -293,10 +335,19 @@ export function createRemote(options) {
             { Name: name, ControllingUserId: userId, Arguments: arguments_ || {} });
     }
     function playstate(host, id, name, decimal) {
-        return request(host, 'POST', '/Sessions/' + encodeURIComponent(id) + '/Playing/' + name,
+        if (name === 'Stop')
+            mediaCache.delete(id);
+        const pending = request(host, 'POST', '/Sessions/' + encodeURIComponent(id) + '/Playing/' + name,
             emby ? {} : { controllingUserId: userId, seekPositionTicks: decimal },
             emby ? { Command: name, ControllingUserId: userId,
                 SeekPositionTicks: decimal === undefined ? undefined : tickInteger(decimal) } : undefined);
+        return name !== 'Stop' ? pending : pending.then(result => {
+            mediaCache.delete(id);
+            return result;
+        }, error => {
+            mediaCache.delete(id);
+            throw error;
+        });
     }
     function play(host, id, command) {
         const names = { now: 'PlayNow', next: 'PlayNext', last: 'PlayLast', shuffle: 'PlayShuffle' };
@@ -409,7 +460,7 @@ export function createRemote(options) {
                 .then(() => (raw.PlayState || {}).IsPaused === true ? playstate(host, id, 'Pause') : undefined);
         });
     }
-    function dispatch(host, id, raw, command) {
+    function dispatch(host, id, raw, command, read) {
         if (commands(raw).indexOf(command.action) < 0)
             throw new Error('command_unavailable');
         if (command.action === 'play')
@@ -434,8 +485,8 @@ export function createRemote(options) {
                 ? general(host, id, 'SetShuffleQueue', { ShuffleMode: command.value ? 'Shuffle' : 'Sorted' })
                 : general(host, id, 'SetPlaybackOrder', { PlaybackOrder: command.value ? 'Shuffle' : 'Default' });
         if (command.action === 'audioTrack' || command.action === 'subtitleTrack') {
-            return hydrate(host, id, raw).then(details => {
-                const tracks = normalize(details)[command.action === 'audioTrack' ? 'audioTracks' : 'subtitleTracks'];
+            return hydrate(host, id, raw, false, read).then(details => {
+                const tracks = details[command.action === 'audioTrack' ? 'audioTracks' : 'subtitleTracks'];
                 if (command.trackId !== null && (!tracks || !tracks.some(track => track.id === command.trackId)))
                     throw new Error('invalid_track');
                 return general(host, id, command.action === 'audioTrack' ? 'SetAudioStreamIndex' : 'SetSubtitleStreamIndex',
@@ -483,6 +534,10 @@ export function createRemote(options) {
                             snapshots.delete(id);
                             queueReads.delete(id);
                         }
+                    }
+                    for (const id of mediaCache.keys()) {
+                        if (!targets.has(id))
+                            mediaCache.delete(id);
                     }
                 }
                 return { targets: found.map(raw => ({ id: String(raw.Id), name: raw.DeviceName || raw.Client || String(raw.Id),
@@ -542,7 +597,10 @@ export function createRemote(options) {
         remoteCommand: (args, host) => {
             const id = targetId(args);
             validate(args.command);
-            return mutate(id, () => session(host, id).then(raw => dispatch(host, id, raw, args.command)));
+            return mutate(id, () => {
+                const read = beginMediaRead(id);
+                return session(host, id, read).then(raw => dispatch(host, id, raw, args.command, read));
+            });
         },
         remoteControls: (args, host) => session(host, targetId(args)).then(raw => {
             const names = supported(raw);
