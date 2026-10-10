@@ -183,16 +183,31 @@ export function createRemote(options) {
         const key = String(media.Id) + ':' + String((raw.PlayState || {}).MediaSourceId || '') + ':' + Boolean(videoPreviews);
         let cached = mediaCache.get(id);
         if (!cached || cached.key !== key) {
-            cached = { key: key, pending: request(host, 'GET', userPath('/Items/') + encodeURIComponent(media.Id),
+            cached = { key: key };
+            const unavailable = () => {
+                // An operation can be cancelled while another state poll starts.
+                // Do not cache failures, or evict a newer edition's metadata.
+                if (mediaCache.get(id) === cached)
+                    mediaCache.delete(id);
+                return {};
+            };
+            cached.pending = request(host, 'GET', userPath('/Items/') + encodeURIComponent(media.Id),
                 { Fields: !emby && videoPreviews ? 'MediaSources,Trickplay' : 'MediaSources' })
-                .then(details => String(details.Id) === String(media.Id) ? details : {}, () => ({})) };
+                .then(details => details && String(details.Id) === String(media.Id) ? details : unavailable(), unavailable);
             mediaCache.set(id, cached);
             if (mediaCache.size > 128)
                 mediaCache.delete(mediaCache.keys().next().value);
         }
-        return cached.pending.then(details => Object.assign({}, raw, {
-            NowPlayingItem: Object.assign({}, details, media)
-        }));
+        return cached.pending.then(details => {
+            const hydrated = Object.assign({}, details, media);
+            // Reduced session DTOs may explicitly serialize omitted metadata as
+            // null. Keep the richer fields fetched for this exact playing item.
+            for (const field of ['MediaSources', 'MediaStreams', 'Trickplay']) {
+                if (media[field] === null || media[field] === undefined)
+                    hydrated[field] = details[field];
+            }
+            return Object.assign({}, raw, { NowPlayingItem: hydrated });
+        });
     }
     function state(host, id, videoPreviews) {
         return session(host, id).then(raw => hydrate(host, id, raw, videoPreviews)).then(raw => {
