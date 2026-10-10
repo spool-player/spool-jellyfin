@@ -406,7 +406,9 @@ export function createSource(configuration, sourceHost) {
                 PlayMethod: args.playMethod, AudioStreamIndex: index(args.audioStreamIndex),
                 SubtitleStreamIndex: args.subtitleStreamIndex === -1 ? -1 : index(args.subtitleStreamIndex),
                 CanSeek: true, Failed: Boolean(args.failed)
-            }, catalogue.queueFields(args))).then(() => ({}));
+            }, args.repeatMode && args.event !== 'stop' ? {
+                RepeatMode: args.repeatMode, PlaybackOrder: args.shuffled ? 'Shuffle' : 'Default'
+            } : {}, catalogue.queueFields(args))).then(() => ({}));
         },
 
         favorite: (args, host) => request(host, args.value ? 'POST' : 'DELETE',
