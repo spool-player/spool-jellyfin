@@ -57,7 +57,8 @@ decode every sheet at playback start.
 The sheet URL and media-source selector follow Jellyfin's
 [TrickplayController](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/TrickplayController.cs).
 
-When `videoPreviews` is false, details omit only the `Trickplay` field, playback
+Details request catalogue data; the `Trickplay` map is loaded when resolving
+playback or inspecting a remote player. When `videoPreviews` is false, playback
 does not make its preview-only item request, and remote snapshots omit both the
 field and descriptor. Chapters, media sources, tracks, artwork and skip markers
 remain available. Remote metadata caches distinguish the preference, so turning

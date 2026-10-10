@@ -293,7 +293,7 @@ export function createSource(configuration, sourceHost) {
         dataWrite: settings.dataWrite,
         dataDelete: settings.dataDelete,
         details: (args, host) => request(host, 'GET', userPath('/Items/' + segment(args.itemId)),
-            { Fields: args.videoPreviews ? detailFields : detailFields.replace(',Trickplay', '') })
+            { Fields: detailFields })
             .then(raw => ({ item: item(raw) })),
         seasons: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Seasons', args),
         episodes: (args, host) => list(host, '/Shows/' + segment(args.seriesId) + '/Episodes', args,

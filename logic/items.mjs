@@ -6,7 +6,9 @@ export const fields = 'SortName,Overview,ProductionYear,PremiereDate,EndDate,Sta
     + 'RunTimeTicks,ChildCount,RecursiveItemCount,LocationType,IsVirtualItem,Genres,Tags,Studios,ProviderIds,'
     + 'OfficialRating,CommunityRating,CriticRating,AlbumPrimaryImageTag';
 
-export const detailFields = fields + ',People,MediaSources,ExternalUrls,Trickplay';
+// The normalized Item has no preview descriptor; resolve fetches the selected
+// edition's Trickplay map when it is actually needed for playback.
+export const detailFields = fields + ',People,MediaSources,ExternalUrls';
 
 export const collectionTypes = {
     movies: 'Movie', tvshows: 'Series', playlists: 'Playlist', boxsets: 'BoxSet',
