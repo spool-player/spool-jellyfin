@@ -273,11 +273,10 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 ## Releasing
 
-Prepared private profile-UX release: **0.2.13**, adding server-user preference
-settings to the saved-server profile/reauthentication context without sharing
-viewer sessions. This source is not a published tag; use only with the reviewed
-profile-UX host. Canonical published providers remain independent.
-The profile-UX SDK is pinned to Spool commit `8434fc141951b3cd8a5e59b2eedf99863018712d`.
+Release **0.2.14** uses the source-only socket host contract. It adds personal
+like/dislike actions, trailers and extras, repeat/queue reporting, clearer download
+edition labels, and bounded page-scoped remote metadata caching. Empty backend
+pages terminate pagination even when the server's total is stale.
 
 Future packages use `.szo` (Spool Zstandard Object): unchanged format-3 zstd
 USTAR bytes, selected with the pinned SDK's explicit `--output` option. Existing
