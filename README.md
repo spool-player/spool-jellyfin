@@ -273,10 +273,8 @@ To try a checkout in Spool without releasing it, configure Spool with
 
 ## Releasing
 
-Release **0.2.14** uses the source-only socket host contract. It adds personal
-like/dislike actions, trailers and extras, repeat/queue reporting, clearer download
-edition labels, and bounded page-scoped remote metadata caching. Empty backend
-pages terminate pagination even when the server's total is stale.
+Release **0.2.15** makes browse listings seekable: Spool can ask for any row with
+`offset` and load only what is on screen of a large library.
 
 Future packages use `.szo` (Spool Zstandard Object): unchanged format-3 zstd
 USTAR bytes, selected with the pinned SDK's explicit `--output` option. Existing
