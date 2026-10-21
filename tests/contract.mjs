@@ -376,6 +376,12 @@ export function run() {
         }).then(page => {
             check(page.items.length === 0 && !page.exhausted && page.cursor === '3',
                 'filtered nonempty backend pages advance by their raw row count');
+            return a.browse({ limit: 1, offset: 2 }, jf.host);
+        }).then(page => {
+            check(page.seekable === true && jf.calls[jf.calls.length - 1].url.indexOf('StartIndex=2') > 0,
+                'a seekable listing starts at a requested row');
+            return fails(() => a.browse({ limit: 1, offset: 1.5 }, jf.host), 'invalid_cursor');
+        }).then(() => {
             return fails(() => a.browse({ cursor: '../1' }, jf.host), 'invalid_cursor');
         }).then(() => {
             step = 'speed test endpoint';
